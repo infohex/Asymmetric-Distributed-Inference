@@ -54,15 +54,4 @@ impl Store {
     }
 }
 
-/// Matrix blob header: little-endian u32 rows, u32 cols, then f32 row-major.
-pub fn matrix_dims(blob: &[u8]) -> Option<(usize, usize)> {
-    if blob.len() < 8 {
-        return None;
-    }
-    let rows = u32::from_le_bytes(blob[0..4].try_into().ok()?) as usize;
-    let cols = u32::from_le_bytes(blob[4..8].try_into().ok()?) as usize;
-    if blob.len() != 8 + rows * cols * 4 {
-        return None;
-    }
-    Some((rows, cols))
-}
+pub use adi_core::blobfmt::dims as matrix_dims;

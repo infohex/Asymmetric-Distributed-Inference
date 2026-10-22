@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/adi-core", "crates/adi-scheduler", "sim"]
+members = ["crates/adi-core", "crates/adi-scheduler", "crates/adi-node", "crates/adi-submit", "sim"]
 
 [workspace.package]
 version = "0.1.0"

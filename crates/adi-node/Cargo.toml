@@ -1,0 +1,17 @@
+[package]
+name = "adi-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Node agent for Asymmetric Distributed Inference: pulls rounds of U, computes them, uploads results, reports."
+
+[dependencies]
+adi-core = { path = "../adi-core" }
+adi-scheduler = { path = "../adi-scheduler" }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+blake3 = "1"
+rayon = "1"
+num_cpus = "1"

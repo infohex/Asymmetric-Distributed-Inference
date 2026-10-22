@@ -538,6 +538,8 @@ pub fn app(state: Shared) -> Router {
         .route("/events", post(submit))
         .route("/events/:id", get(event_status))
         .route("/metrics", get(metrics))
+        // Matrix blobs are tens of MB; axum's default limit is 2 MB.
+        .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024 * 1024))
         .with_state(state)
 }
 
