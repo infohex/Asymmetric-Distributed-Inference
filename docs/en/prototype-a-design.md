@@ -80,9 +80,24 @@ Number of U = ⌈M/b⌉ × ⌈N/b⌉; each U costs b × b × K multiply-adds, un
 
 Data by reference: a U carries only a_hash, b_hash, bi, bj. On first sight of a hash the node GETs the whole matrix and caches it (once each for A and B); later U transfer nothing. This is the minimal form of the design's "data by reference, node cache"; for the prototype it also means B has signal only in the first round, bytes_in = 0 afterwards.
 
-Results: each U's C block (b × b × 4 bytes, 16 KB by default) is PUT to /blob; the report carries only the hash. The submitter assembles C by u_id at the end.
+Results: each U's C block (b × b × 4 bytes, 64 KB at b = 128) is PUT to /blob; the report carries only the hash. The submitter assembles C by u_id at the end. Upload completes before the report, so upload time is naturally part of t; a WAN node's upload bandwidth shows up directly as a longer t and a lower r, which is exactly what "t includes network transfer" means in the design.
 
 Granularity: fixed per-U overhead is about 1 ms (JSON, hashing, HTTP), so by the "≥ 100×" rule a U should compute for ≥ 100 ms on the slowest machine. With b = 64 and K = 4096 a U is 16.8 M multiply-adds, roughly 10–30 ms on one core — too small. Start with b = 128 (67 M multiply-adds, 50–150 ms per core) and adjust after measurement.
+
+## 4a. Deployment: LAN and WAN
+
+Machines are unrestricted and the network includes the public internet, so the prototype is designed under the constraints below; a LAN is just the easy case:
+
+| Constraint | Approach |
+| --- | --- |
+| Nodes may sit behind NAT with no public address | Every connection is initiated by the node (register, pull, fetch, upload, report); the scheduler never dials a node. The pull model satisfies this by construction. The scheduler needs one reachable address: listen directly on a LAN, behind a reverse proxy (TLS) on the internet |
+| WAN round trip 50–200 ms, far above a LAN's 1 ms | W belongs to the ET, not a global constant: LAN ET W = 1 s, WAN ET W = 3–5 s (≥ 20× round trip). The prototype starts with one ET at W = 3 s, nodes from both networks mixed, and checks whether V1/V2 still hold |
+| Narrow WAN upload (5–20 Mbps is common); 64 KB per U at b = 128 | WAN nodes are throttled by result upload. That is a real constraint and not worked around: t includes upload, r shrinks, the node takes less. The measurement gives "how much lower a WAN node's effective r is than its compute" — the first real data for the data-cost model of design section 10 |
+| First fetch of A and B is 64 MB each (4096² × f32), tens of seconds over WAN | Happens once, in the first round, and is captured by the first-round B measurement; zero transfer afterwards. Slow start takes c U in the first round, so a long first round does not inflate later quotas |
+| A public endpoint gets scanned | The token returned by registration goes in a Bearer header on every later request; that is the only layer in the prototype, TLS is left to the reverse proxy |
+| Any OS (Windows / Linux / macOS) | Pure Rust, no system dependencies, `cargo build` is enough; cache directory and core detection through cross-platform crates (`num_cpus`, `dirs`) |
+
+WAN nodes land in a slower ET naturally because their t is larger — the lane mechanism working as designed; acceptance check 6 looks at exactly this.
 
 ## 5. Node agent
 
@@ -120,6 +135,7 @@ register → loop {
 3. **Simulator comparison**: generate a scenario.toml from the measured per-node r, B and latency, run the simulator, compare total time over the 10 E. **Pass line: measured ÷ simulated ≤ 1.15.** Beyond that, the real system has an overhead the simulator does not model, and it has to be found.
 4. **Churn**: kill the slow node's agent mid-E, restart it 10 s later. Check V4 and reconnect reclaim (reissued > 0, late_results = 0 or present and deduplicated).
 5. **Three machines** (if a third exists): add a medium one, check V1/V2 still hold across three throughput levels.
+6. **LAN + WAN mixed**: at least one WAN node runs in the same ET (W = 3 s) as the LAN nodes. Check the gap between the WAN node's measured r and its compute capacity (the cost of upload throttling) and whether V1/V2 hold; then open two ETs (LAN W = 1 s, WAN W = 3 s) and check that the WAN node lands in the slow ET on its own.
 
 ## 8. Effort estimate
 
@@ -135,7 +151,9 @@ Each stage is committed separately. P1 proceeds to P2 only after the simulator r
 
 ## For your confirmation
 
-- [ ] Which machines are available (CPU model, cores, memory, OS, same LAN)? At least one fast and one slow.
+- [x] Machines: CPU, cores, memory and OS unrestricted; network includes LAN and WAN (confirmed, see 4a).
 - [ ] Control plane as JSON over HTTP (simple, curl-debuggable) or a binary protocol from the start? Suggest JSON first; switch when a bottleneck shows.
 - [ ] Is b = 128, K = 4096 an acceptable starting point?
 - [ ] Node agent with rayon only, or reserve a backend abstraction for the later GPU runtime? Suggest a `trait Kernel { fn run(&self, u: &Unit) -> Block }` with one CPU implementation now, nothing more.
+
+The last three proceed as suggested unless you object.
