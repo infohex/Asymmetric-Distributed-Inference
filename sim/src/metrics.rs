@@ -67,6 +67,8 @@ pub struct Metrics {
     pub duplicate_results: u64,
     pub late_results: u64,
     pub churn_events: u64,
+    pub tier_violations: u64,
+    pub waiting_at_end: usize,
 }
 
 pub struct Verdicts {
@@ -195,6 +197,8 @@ impl Metrics {
         let _ = writeln!(s, "V2 max tail wait over {} events: {:.4} s, limit {:.4} s -> {}",
             self.events.len(), v.v2_max_tail, w, pf(v.v2_pass));
         let _ = writeln!(s, "ET eligibility transitions (all nodes): {}", self.transitions);
+        let _ = writeln!(s, "dependencies: {} units still waiting at end (must be 0); hardware tier violations: {} (must be 0)",
+            self.waiting_at_end, self.tier_violations);
         let _ = writeln!(s, "churn: {} offline incidents, {} units reissued, {} late results, {} duplicate results dropped",
             self.churn_events, self.reissued_units, self.late_results, self.duplicate_results);
         match (v.v4_worst_excess, v.v4_pass) {

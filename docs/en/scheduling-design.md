@@ -174,7 +174,7 @@ Node eligibility = hardware match (hard condition) and measured t under the ceil
 
 ### 6.2 Rules between ETs
 
-- Fast traffic may drop down; slow traffic may never move up. On each pull a node first checks the fastest ET it qualifies for and moves to slower ones only when that is empty.
+- Fast traffic may drop down; slow traffic may never move up. On each pull a node first checks the fastest ET it qualifies for and moves to slower ones only when that is empty. Among ETs with the same ceiling, its **own tier** comes first: a GPU node serves the work only it can do before dropping into the general ET. (Simulator stage 5: without this order GPU nodes went to the general ET first and GPU work sat idle.)
 - Nodes pull every W, so when new U land in a fast ET, a fast node returns to it within at most W.
 - A node that qualifies for no ET receives no U; it stays in the node table and is re-enabled when its t recovers.
 - Backpressure: when an ET's ready U exceed its capacity, compilation of new E into it pauses instead of piling up without bound.
@@ -208,6 +208,8 @@ B is updated the same way. A rolling standard deviation σ of r is maintained al
 
 **Weight by round length.** Taper rounds are far shorter than W, so the fixed round-trip overhead dominates and their measured r is badly low; updating with full weight collapses the estimate at the end of every batch. Hence α_eff = α × min(1, round duration ÷ W). (Simulator stage 1: unweighted, the estimate fell from 990 to 226; weighted, it holds at 986.)
 
+**Rounds smaller than c are not measurements.** A round with fewer U than the node's concurrency does not even fill its hardware; it measures round-trip overhead, not throughput, and never updates r. A serial chain issues one U per step, and hundreds of such steps halve the estimate even with length weighting. (Simulator stage 5: GPU estimate 1039 → 1973 against a true 2000.)
+
 **Threshold and hysteresis.** ET eligibility is judged on t = c ÷ r, with hysteresis in two dimensions: in value, promotion requires t ≤ t_max × (1 − band) while demotion happens at t > t_max; in time, promotion also requires N consecutive qualifying rounds while demotion takes one. Err on the conservative side: a slow node wrongly admitted to a fast ET holds up a whole batch, whereas a fast node temporarily held in a slower ET costs little. (Simulator stage 3: for a slowly drifting node, time hysteresis alone cut transitions by only 0–50%, because the node really does cross the line; band = 0.2, about twice the drift amplitude, cut them by 83–94%.)
 
 **Concurrency c.** For AI-type U it is mostly determined by memory: a U declares the memory it needs, and a node's c is computed from remaining memory. Hardware parameters give an initial value; measured r already reflects real concurrency.
@@ -227,6 +229,10 @@ n_i = ⌊ R · r_i / Σ_j r_j ⌋
 This shrinks the window to R ÷ Σr so all nodes finish the final round together. The rounding remainder goes to the node with the largest r, because the last U's completion time is the lower bound on batch completion.
 
 Both Σr and "the node with the largest r" count only the **nodes actually serving this ET now**: idle ones, or ones whose in-flight round came from this ET. A node busy in another ET does not count; it only drops down once its own ET is empty. A node that gets a zero share in one ET (remainder reserved for a faster node) moves on to the next ET it qualifies for. (Simulator stage 3: without this, the slow ET's remainder waited for a fast node that never came and a 500-U Event stalled for 310 s.)
+
+**When the share is smaller than one U.** The taper formula assumes a U costs far less than a share; a large U such as a reduce U, or the final crumb, breaks that assumption: no share covers it and it sits at the head of the queue forever. Rule: the fastest **idle** node takes the head U whole, share or not. "Fastest" is judged among idle nodes only; a busy node could only reach it after its current round. (Simulator stage 5: a reduce U of cost 20 stalled the whole ET until the simulation limit.)
+
+**Waking idle nodes.** An idle node that finds no U parks its request (long-poll); when a U becomes ready the scheduler wakes the fastest eligible parked node at once rather than leaving it to a periodic retry. If each step of a serial chain had to wait for a retry period, a 300-step chain would run 9× slower.
 
 **Timeout reclaim.** A round not returned after k × W is treated as offline and its U go back to the front of the ET for reissue; when a node reconnects while the scheduler still holds its in-flight round, that round is reclaimed at once rather than at the timeout. If the node later returns them, the first result wins and duplicates are discarded. The timeout multiplier may be personalized from a node's online history.
 
@@ -324,4 +330,6 @@ Known risks:
 | Non-idempotent U | Reissue or duplication yields wrong results | Sandbox guarantees side-effect-free IR; validate at submission |
 | Poor IR translation quality | U run far slower than native on some hardware | Build the general tier and one GPU runtime first; expand after measurement |
 
-Optional enhancement: **critical-path priority**. For E with long serial chains, units on the chain may be placed in a faster ET even when the E's own deadline is relaxed, because chain length × U time determines the E's completion time. Add once the base scheme is stable.
+Optional enhancement: **critical-path priority**. For E with long serial chains, units on the chain may be placed in a faster ET even when the E's own deadline is relaxed, because chain length × U time determines the E's completion time. Add once the base scheme is stable. (Simulator stage 5: when a chain shares a W = 1 s ET with parallel work, each unlocked step waits for some node's full-window round to end before anyone takes it: a 300-step chain took 40 s, versus 4.5 s on an idle ET. Putting chains in an ET with a smaller W is exactly this enhancement.)
+
+Optional enhancement: **straggler duplication**. With churn the tail bound is timeout multiplier × W + redo time (simulator stage 4: 1.5–4.8 s); duplicating the in-flight work of the last nodes to idle ones brings it back down.

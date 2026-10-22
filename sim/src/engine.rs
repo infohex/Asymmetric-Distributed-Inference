@@ -15,6 +15,8 @@ use std::collections::BinaryHeap;
 
 enum Event {
     Pull(NodeId),
+    /// The periodic fallback pull of a parked node.
+    Retry(NodeId),
     RoundDone {
         node: NodeId,
         epoch: u64,
@@ -76,6 +78,13 @@ pub struct Simulation {
     last_reclaim: Vec<Option<(f64, f64, f64)>>,
     /// Per Event: cost of units whose result has been accepted.
     done_cost: Vec<f64>,
+    unit_done: Vec<bool>,
+    /// Rounds issued to a node whose tier is below the ET's tier (must stay 0).
+    tier_violations: u64,
+    /// Nodes parked on an empty pull (long-poll): woken as soon as work appears.
+    parked: Vec<bool>,
+    /// A retry Pull is already scheduled for the node (at most one outstanding).
+    retry_pending: Vec<bool>,
     reclaims_per_event: Vec<u32>,
     churn_events: u64,
 }
@@ -93,6 +102,7 @@ impl Simulation {
             .map(|e| e.et.as_deref().and_then(|n| scheduler.et_index(n)).unwrap_or(0))
             .collect();
         let n_events = workload.events.len();
+        let n_units = workload.units.len();
         let n_nodes = nodes.len();
         let mut metrics = Metrics::default();
         metrics.total_units = workload.units.len() as u64;
@@ -113,6 +123,10 @@ impl Simulation {
             event_et,
             last_reclaim: vec![None; n_events],
             done_cost: vec![0.0; n_events],
+            unit_done: vec![false; n_units],
+            tier_violations: 0,
+            parked: vec![false; n_nodes],
+            retry_pending: vec![false; n_nodes],
             reclaims_per_event: vec![0; n_events],
             churn_events: 0,
         }
@@ -158,6 +172,10 @@ impl Simulation {
             match event {
                 Event::Arrival(e) => self.on_arrival(e),
                 Event::Pull(n) => self.on_pull(n),
+                Event::Retry(n) => {
+                    self.retry_pending[n] = false;
+                    self.on_pull(n)
+                }
                 Event::RoundDone { node, epoch, issued_at, units, cost, bytes, kind, r_est, r_true_eff } => {
                     if self.nodes[node].online && self.nodes[node].epoch == epoch {
                         self.on_round_done(node, issued_at, units, cost, bytes, kind, r_est, r_true_eff)
@@ -180,6 +198,8 @@ impl Simulation {
         self.metrics.duplicate_results = self.scheduler.duplicate_results;
         self.metrics.late_results = self.scheduler.late_results;
         self.metrics.churn_events = self.churn_events;
+        self.metrics.tier_violations = self.tier_violations;
+        self.metrics.waiting_at_end = self.scheduler.waiting_units();
         let truth = self
             .nodes
             .iter()
@@ -195,8 +215,38 @@ impl Simulation {
         let et = self.event_et[e];
         for id in ids {
             let u = &self.workload.units[id];
-            self.scheduler.enqueue(et, u.id, u.cost, u.bytes);
+            let deps = u.deps.clone();
+            self.scheduler.submit(et, u.id, u.cost, u.bytes, &deps);
         }
+        self.wake_parked();
+    }
+
+    /// Work appeared: for each ET that now has work, the fastest parked node
+    /// eligible for it gets its long-poll answered. Others stay parked and
+    /// are woken by the next change or their retry tick.
+    fn wake_parked(&mut self) {
+        let n_et = self.scheduler.ets().len();
+        for et in 0..n_et {
+            if self.scheduler.ets()[et].ready_cost() <= 0.0 {
+                continue;
+            }
+            let best = (0..self.nodes.len())
+                .filter(|&n| self.parked[n] && self.nodes[n].online && self.scheduler.is_eligible(n, et))
+                .max_by(|&a, &b| self.scheduler.estimate(a).r.total_cmp(&self.scheduler.estimate(b).r));
+            if let Some(n) = best {
+                self.parked[n] = false;
+                self.schedule(self.now, Event::Pull(n));
+            }
+        }
+    }
+
+    /// True while some unit of the Event still waits on a prerequisite.
+    fn event_has_waiting(&self, e: EventId) -> bool {
+        let ev = &self.workload.events[e];
+        ev.units.iter().any(|&u| {
+            let unit = &self.workload.units[u];
+            !unit.deps.is_empty() && unit.deps.iter().any(|&d| !self.unit_done[d])
+        })
     }
 
     fn exp(&mut self, mean: f64) -> f64 {
@@ -208,6 +258,7 @@ impl Simulation {
     }
 
     fn note_reclaim(&mut self, units: &[UnitId], cost: f64) {
+        self.wake_parked();
         if std::env::var_os("SIM_TRACE").is_some() {
             eprintln!("{:10.3} reclaim {} units (cost {cost})", self.now, units.len());
         }
@@ -264,23 +315,37 @@ impl Simulation {
         if !self.nodes[node].online || self.scheduler.has_in_flight(node) {
             return;
         }
+        self.parked[node] = false;
         self.metrics.pulls += 1;
         let round = self.scheduler.pull(node, self.now);
         if round.units.is_empty() {
             self.metrics.empty_pulls += 1;
-            // Starvation counts only for Events this node could have served.
+            if std::env::var_os("SIM_TRACE").is_some() && self.metrics.empty_pulls <= 12 {
+                eprintln!("empty pull: {}", self.scheduler.debug_state(node, self.now));
+            }
+            // Starvation counts only for Events this node could have served,
+            // and only once the Event has nothing left waiting on a
+            // prerequisite: a chain's idle nodes are serialization, not tail.
             for (i, ev) in self.workload.events.iter().enumerate() {
                 if ev.submitted_at.is_some()
                     && !ev.is_complete()
                     && self.first_starve[i].is_none()
                     && self.scheduler.is_eligible(node, self.event_et[i])
+                    && !self.event_has_waiting(i)
                 {
                     self.first_starve[i] = Some(self.now);
                 }
             }
-            let retry = self.now + self.scheduler.retry_delay();
-            self.schedule(retry, Event::Pull(node));
+            self.parked[node] = true;
+            if !self.retry_pending[node] {
+                self.retry_pending[node] = true;
+                let retry = self.now + self.scheduler.retry_delay();
+                self.schedule(retry, Event::Retry(node));
+            }
             return;
+        }
+        if self.scheduler.ets()[round.et].tier_level > crate::scheduler::tier_level(&self.nodes[node].tier) {
+            self.tier_violations += 1;
         }
         let (duration, r_true_eff) =
             self.nodes[node].round_duration(round.cost, round.bytes, &mut self.rng);
@@ -333,6 +398,7 @@ impl Simulation {
 
         let mut completed: Vec<EventId> = Vec::new();
         for id in accepted {
+            self.unit_done[id] = true;
             let e = self.workload.units[id].event;
             self.done_cost[e] += self.workload.units[id].cost;
             let ev = &mut self.workload.events[e];
@@ -361,5 +427,6 @@ impl Simulation {
         }
         // Pull again right away; the Arrival above (same time, lower seq) lands first.
         self.schedule(self.now, Event::Pull(node));
+        self.wake_parked();
     }
 }

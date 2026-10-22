@@ -96,7 +96,9 @@ Four initial scenarios, one per acceptance criterion:
 | flapping | One node whose r_true sits right at the fast-ET threshold | V3; sweep N |
 | churn | 8 nodes, mean 10 min online / 2 min offline | V4; sweep timeout multiplier |
 
-Later additions: fanout-reduce dependencies, Poisson arrivals, two hardware tiers.
+Stage 5 adds the `deps` scenario: two hardware tiers (gpu / general) and three dependency shapes at once (parallel, a 300-step serial chain, 2000 parallel + one reduce U of cost 20); checks no tier violation, no U left waiting, V1/V2.
+
+Later additions: Poisson arrivals, straggler duplication, critical-path priority.
 
 ## 7. Code layout (Rust)
 

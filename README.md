@@ -57,7 +57,7 @@ Three layers, three responsibilities:
 
 ## Status
 
-Design stage. The scheduling simulator (`sim/`, Rust) is in progress: stage 1 passes V1 and V2 on the basic scenario. See `sim/results/basic/summary.txt`.
+Design validated by simulation. The scheduling simulator (`sim/`, Rust) completed all five stages; each scenario's `sim/results/<name>/summary.txt` holds the measured V1–V4 verdicts, and the mechanism fixes it forced are recorded inline in the design document. Next: the shape-A prototype.
 
 ## License
 

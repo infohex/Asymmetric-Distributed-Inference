@@ -57,7 +57,7 @@ flowchart TB
 
 ## 状态
 
-设计阶段。调度模拟器（`sim/`，Rust）进行中：第 1 阶段在 basic 场景通过 V1、V2，见 `sim/results/basic/summary.txt`。
+设计已通过模拟验证。调度模拟器（`sim/`，Rust）五个阶段全部完成，各场景的 `sim/results/<名称>/summary.txt` 记录 V1–V4 实测判定，模拟器逼出的机制修正已内联写进设计文档。下一步：形态 A 原型。
 
 ## 许可证
 

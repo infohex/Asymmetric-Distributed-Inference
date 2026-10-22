@@ -12,6 +12,8 @@ pub struct Unit {
     /// Compute cost in relative units; 1.0 = one "standard" U.
     pub cost: f64,
     pub bytes: u64,
+    /// Prerequisite units (ids within the same Event).
+    pub deps: Vec<UnitId>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,11 +56,35 @@ impl Workload {
         for (wi, spec) in specs.iter().enumerate() {
             for _ in 0..spec.events {
                 let e = events.len();
-                let mut ids = Vec::with_capacity(spec.units_per_event);
-                for _ in 0..spec.units_per_event {
-                    let id = units.len();
-                    units.push(Unit { id, event: e, cost: 1.0, bytes: spec.unit_bytes });
-                    ids.push(id);
+                let mut ids = Vec::with_capacity(spec.units_per_event + 1);
+                match spec.shape.as_str() {
+                    "serial" => {
+                        // A chain: each U depends on the previous one.
+                        for i in 0..spec.units_per_event {
+                            let id = units.len();
+                            let deps = if i == 0 { Vec::new() } else { vec![id - 1] };
+                            units.push(Unit { id, event: e, cost: 1.0, bytes: spec.unit_bytes, deps });
+                            ids.push(id);
+                        }
+                    }
+                    "fanout_reduce" => {
+                        // N parallel U, then one reduce U that depends on all of them.
+                        for _ in 0..spec.units_per_event {
+                            let id = units.len();
+                            units.push(Unit { id, event: e, cost: 1.0, bytes: spec.unit_bytes, deps: Vec::new() });
+                            ids.push(id);
+                        }
+                        let id = units.len();
+                        units.push(Unit { id, event: e, cost: spec.reduce_cost, bytes: spec.unit_bytes, deps: ids.clone() });
+                        ids.push(id);
+                    }
+                    _ => {
+                        for _ in 0..spec.units_per_event {
+                            let id = units.len();
+                            units.push(Unit { id, event: e, cost: 1.0, bytes: spec.unit_bytes, deps: Vec::new() });
+                            ids.push(id);
+                        }
+                    }
                 }
                 events.push(Event {
                     id: e,

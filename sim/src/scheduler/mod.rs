@@ -6,11 +6,13 @@
 //! declared concurrency `c` and its declared hardware tier.
 
 pub mod estimate;
+pub mod resolver;
 
 use crate::node::NodeId;
 use crate::scenario::{EtSpec, SchedulerParams};
 use crate::workload::UnitId;
 use estimate::Estimate;
+use resolver::Resolver;
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +98,12 @@ pub struct Trench {
     ready_cost: f64,
 }
 
+impl Trench {
+    pub fn ready_cost(&self) -> f64 {
+        self.ready_cost
+    }
+}
+
 pub fn tier_level(tier: &str) -> u8 {
     match tier {
         "general" => 0,
@@ -113,6 +121,9 @@ pub struct Scheduler {
     done: Vec<bool>,
     pub duplicate_results: u64,
     pub late_results: u64,
+    resolver: Resolver,
+    /// Per unit: (et, cost, bytes), so an unlocked unit can be enqueued later.
+    unit_info: Vec<(usize, f64, u64)>,
 }
 
 impl Scheduler {
@@ -129,8 +140,10 @@ impl Scheduler {
                 ready_cost: 0.0,
             })
             .collect();
-        // Fastest ET first: that is the order a node checks them in.
-        trenches.sort_by(|a, b| a.t_max.total_cmp(&b.t_max).then(a.tier_level.cmp(&b.tier_level)));
+        // Fastest ET first: that is the order a node checks them in. At equal
+        // ceilings the higher tier comes first, so a GPU node serves the work
+        // only it can do before dropping into the general ET.
+        trenches.sort_by(|a, b| a.t_max.total_cmp(&b.t_max).then(b.tier_level.cmp(&a.tier_level)));
         let n_et = trenches.len();
         let nodes = nodes
             .iter()
@@ -150,7 +163,33 @@ impl Scheduler {
                 }
             })
             .collect();
-        Scheduler { params, nodes, ets: trenches, done: Vec::new(), duplicate_results: 0, late_results: 0 }
+        Scheduler {
+            params,
+            nodes,
+            ets: trenches,
+            done: Vec::new(),
+            duplicate_results: 0,
+            late_results: 0,
+            resolver: Resolver::default(),
+            unit_info: Vec::new(),
+        }
+    }
+
+    /// Submit a unit of an Event: it enters its ET now if every prerequisite
+    /// is done, otherwise it waits in the resolver.
+    pub fn submit(&mut self, et: usize, id: UnitId, cost: f64, bytes: u64, deps: &[UnitId]) {
+        if self.unit_info.len() <= id {
+            self.unit_info.resize(id + 1, (0, 0.0, 0));
+            self.done.resize(id + 1, false);
+        }
+        self.unit_info[id] = (et, cost, bytes);
+        if self.resolver.register(id, deps, &self.done) {
+            self.enqueue(et, id, cost, bytes);
+        }
+    }
+
+    pub fn waiting_units(&self) -> usize {
+        self.resolver.waiting()
     }
 
     pub fn has_in_flight(&self, node: NodeId) -> bool {
@@ -237,6 +276,12 @@ impl Scheduler {
 
     pub fn ets(&self) -> &[Trench] {
         &self.ets
+    }
+
+    pub fn debug_state(&self, node: NodeId, now: f64) -> String {
+        let ets: Vec<String> = self.ets.iter().enumerate().map(|(i, e)| format!("{}[{}]: ready {} cost {:.0} elig {}", e.name, i, e.ready.len(), e.ready_cost, self.nodes[node].eligible[i])).collect();
+        let n = &self.nodes[node];
+        format!("t={now:.3} node {node} r {:.1} samples {} ramp {} inflight {} :: {}", n.est.r, n.est.samples, n.est.ramp, n.in_flight.is_some(), ets.join(" | "))
     }
 
     pub fn is_eligible(&self, node: NodeId, et: usize) -> bool {
@@ -329,7 +374,10 @@ impl Scheduler {
         let silence = 2.0 * self.retry_delay();
         let mut sum_r = 0.0;
         let mut remaining_other = 0.0;
-        let mut max_r = 0.0_f64;
+        // Fastest node among those idle right now: the one that should take
+        // a remainder nobody's share covers. A busy node would only get to
+        // it after its current round.
+        let mut max_r_idle = 0.0_f64;
         for (j, n) in self.nodes.iter().enumerate() {
             if n.est.samples == 0 || !n.eligible[et] {
                 continue;
@@ -343,7 +391,9 @@ impl Scheduler {
             }
             let r_j = n.est.r_safe(k);
             sum_r += r_j;
-            max_r = max_r.max(r_j);
+            if n.in_flight.is_none() {
+                max_r_idle = max_r_idle.max(r_j);
+            }
             if j != node {
                 if let Some(f) = &n.in_flight {
                     let done = r_j * (now - f.issued_at);
@@ -359,8 +409,12 @@ impl Scheduler {
             ((r_i * w).floor().max(entry.c as f64), RoundKind::Normal, r_i)
         } else {
             let mut q = (r_i * d).floor();
-            if q < 1.0 && ready_cost > 0.0 && r_i >= max_r {
-                q = (r_i * d).ceil().max(1.0);
+            // The share may be smaller than the next U itself (a large reduce
+            // U, or the last crumb). The fastest idle node takes it whole
+            // rather than leaving it for a share that never grows.
+            let front = self.ets[et].ready.front().map(|u| u.cost).unwrap_or(0.0);
+            if q < front && ready_cost > 0.0 && r_i >= max_r_idle {
+                q = front.max(1.0);
             }
             (q, RoundKind::Taper, r_i)
         }
@@ -383,6 +437,13 @@ impl Scheduler {
                 accepted.push(u);
             }
         }
+        // Release whatever these completions unlock.
+        for &u in &accepted {
+            for d in self.resolver.complete(u) {
+                let (et, cost, bytes) = self.unit_info[d];
+                self.enqueue(et, d, cost, bytes);
+            }
+        }
         let entry = &mut self.nodes[obs.node];
         entry.last_seen = obs.returned_at;
         let late = match &entry.in_flight {
@@ -398,10 +459,14 @@ impl Scheduler {
         let duration = (obs.returned_at - obs.issued_at).max(1e-9);
         let r_round = obs.cost / duration;
         let b_round = obs.bytes as f64 / duration;
-        // Rounds much shorter than W are dominated by the fixed overhead and
-        // carry little information: weight them by their length.
-        let alpha_eff = alpha * (duration / w).min(1.0);
-        entry.est.update(r_round, b_round, alpha_eff);
+        // A round smaller than the node's concurrency does not even fill its
+        // hardware: it measures the round-trip overhead, not capacity, so it
+        // never touches the estimate. Larger rounds that are still much
+        // shorter than W carry little information and are weighted by length.
+        if obs.cost >= entry.c as f64 || entry.est.samples == 0 {
+            let alpha_eff = alpha * (duration / w).min(1.0);
+            entry.est.update(r_round, b_round, alpha_eff);
+        }
 
         // Eligibility: t = c / r_safe against each ET's ceiling, hardware tier
         // as the hard condition. Promotion after n_hyst consecutive qualifying

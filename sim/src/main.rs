@@ -65,7 +65,8 @@ fn cmd_run(path: &Path, out: Option<PathBuf>) -> ExitCode {
         let without = m0.transitions as f64;
         let reduction = if without > 0.0 { 1.0 - with / without } else { 1.0 };
         let pass = reduction >= 0.8;
-        Some((metrics.transitions, m0.transitions, reduction, pass))
+        // Fewer than 10 transitions without hysteresis is initial promotion, not flapping.
+        if m0.transitions < 10 { None } else { Some((metrics.transitions, m0.transitions, reduction, pass)) }
     } else {
         None
     };
@@ -82,7 +83,8 @@ fn cmd_run(path: &Path, out: Option<PathBuf>) -> ExitCode {
             println!("written: {}", out.display());
             let v = metrics.verdicts(sc.scheduler.w);
             let v3_fail = matches!(v3, Some((_, _, _, false)));
-            if v.v1_pass == Some(false) || !v.v2_pass || v3_fail || v.v4_pass == Some(false) {
+            if v.v1_pass == Some(false) || !v.v2_pass || v3_fail || v.v4_pass == Some(false)
+                || metrics.tier_violations > 0 || metrics.waiting_at_end > 0 {
                 ExitCode::from(3)
             } else {
                 ExitCode::SUCCESS

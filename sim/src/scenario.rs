@@ -103,6 +103,13 @@ pub struct WorkloadSpec {
     pub arrival: String,
     /// Target ET by name; omitted = the first ET.
     pub et: Option<String>,
+    /// "parallel" (default), "serial" (a chain) or "fanout_reduce"
+    /// (units_per_event parallel U + one reduce U depending on all of them).
+    #[serde(default = "default_shape")]
+    pub shape: String,
+    /// Cost of the reduce U in fanout_reduce (in standard-U units).
+    #[serde(default = "default_reduce_cost")]
+    pub reduce_cost: f64,
 }
 
 fn default_seed() -> u64 {
@@ -137,6 +144,12 @@ fn default_unit_bytes() -> u64 {
 }
 fn default_arrival() -> String {
     "all_at_once".to_string()
+}
+fn default_shape() -> String {
+    "parallel".to_string()
+}
+fn default_reduce_cost() -> f64 {
+    1.0
 }
 
 impl Scenario {
@@ -180,6 +193,10 @@ impl Scenario {
             match wl.arrival.as_str() {
                 "all_at_once" | "sequential" => {}
                 other => return Err(format!("workload.arrival: unknown mode {other:?}")),
+            }
+            match wl.shape.as_str() {
+                "parallel" | "serial" | "fanout_reduce" => {}
+                other => return Err(format!("workload.shape: unknown shape {other:?}")),
             }
             if let Some(et) = &wl.et {
                 if !self.ets.iter().any(|e| &e.name == et) {

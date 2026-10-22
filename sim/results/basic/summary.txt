@@ -1,16 +1,17 @@
 W = 1
-sim time = 101.864 s, rounds = 445, pulls = 483 (empty 38), units = 200000, reissued = 0
-scheduler messages/s = 9.1
-ideal makespan (Σcost ÷ Σ r_true) = 99.010 s, efficiency = 0.972
+sim time = 101.660 s, rounds = 462, pulls = 492 (empty 30), units = 200000, reissued = 0
+scheduler messages/s = 9.4
+ideal makespan (Σcost ÷ Σ r_true) = 99.010 s, efficiency = 0.974
 
 per node: name, r_true, r_est(final), steady rounds, mean round duration, idle ratio
-     fast1  r_true   1000.00  r_est    986.28  rounds   93  mean 0.9847 s  idle 0.025
-     fast2  r_true   1000.00  r_est    987.02  rounds   97  mean 0.9872 s  idle 0.007
-     slow1  r_true     10.00  r_est      9.89  rounds   99  mean 0.9101 s  idle 0.028
-     slow2  r_true     10.00  r_est      9.89  rounds   99  mean 0.9101 s  idle 0.028
+     fast1  r_true   1000.00  r_est    988.85  rounds   94  mean 0.9953 s  idle 0.016
+     fast2  r_true   1000.00  r_est    986.34  rounds   98  mean 0.9957 s  idle 0.012
+     slow1  r_true     10.00  r_est      9.89  rounds   99  mean 0.9101 s  idle 0.017
+     slow2  r_true     10.00  r_est      9.88  rounds  102  mean 0.9101 s  idle 0.005
 
-V1 steady-state round duration: mean 0.9473 s, spread max-min 0.0889 s (P95-P5 0.0889 s), limit 0.2000 s -> PASS
-V2 max tail wait over 10 events: 0.3590 s, limit 1.0000 s -> PASS
+V1 steady-state round duration: mean 0.9518 s, spread max-min 0.0889 s (P95-P5 0.0889 s), limit 0.2000 s -> PASS
+V2 max tail wait over 10 events: 0.1068 s, limit 1.0000 s -> PASS
 ET eligibility transitions (all nodes): 0
+dependencies: 0 units still waiting at end (must be 0); hardware tier violations: 0 (must be 0)
 churn: 0 offline incidents, 0 units reissued, 0 late results, 0 duplicate results dropped
 V4: no reclaims in this run -> N/A

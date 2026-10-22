@@ -1,0 +1,82 @@
+# deps: two hardware tiers and three dependency shapes at once.
+# - "gpu" ET (tier gpu): only GPU nodes may serve it; parallel Events.
+# - "cpu" ET (tier general): everyone may serve it; GPU nodes drop into it
+#   when the gpu ET is empty.
+# - fanout_reduce Events: N parallel U, then one reduce U (cost 20) that
+#   depends on all of them - aggregation as a U.
+# - serial Events: a chain of 300 U, each depending on the previous one.
+# Checks: no tier violation, no unit left waiting, V1/V2 on the parallel
+# work, and the chain lands on the fastest idle node.
+
+name = "deps"
+seed = 1
+
+[scheduler]
+w = 1.0
+alpha = 0.3
+k = 1.0
+
+[[ets]]
+name = "gpu"
+tier = "gpu"
+t_max = 1.0
+
+[[ets]]
+name = "cpu"
+tier = "general"
+t_max = 1.0
+
+[[nodes]]
+id = "gpu1"
+r_true = 2000.0
+b_true = 1.0e9
+c = 64
+latency = 0.01
+tier = "gpu"
+
+[[nodes]]
+id = "gpu2"
+r_true = 2000.0
+b_true = 1.0e9
+c = 64
+latency = 0.01
+tier = "gpu"
+
+[[nodes]]
+id = "cpu1"
+r_true = 200.0
+b_true = 1.0e8
+c = 8
+latency = 0.01
+
+[[nodes]]
+id = "cpu2"
+r_true = 200.0
+b_true = 1.0e8
+c = 8
+latency = 0.01
+
+[[workloads]]
+et = "gpu"
+shape = "parallel"
+events = 10
+units_per_event = 30000
+unit_bytes = 1024
+arrival = "sequential"
+
+[[workloads]]
+et = "cpu"
+shape = "fanout_reduce"
+events = 10
+units_per_event = 2000
+reduce_cost = 20.0
+unit_bytes = 1024
+arrival = "sequential"
+
+[[workloads]]
+et = "cpu"
+shape = "serial"
+events = 3
+units_per_event = 300
+unit_bytes = 1024
+arrival = "sequential"
