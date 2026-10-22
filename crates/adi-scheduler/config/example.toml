@@ -1,0 +1,17 @@
+# adi-scheduler configuration. Copy and edit.
+
+listen = "0.0.0.0:7700"
+data_dir = "data"        # blobs and metrics; omit for memory only
+admin_token = ""         # required on /events and /metrics when set
+
+[scheduler]
+w = 1.0                  # LAN; use 3.0-5.0 for nodes over the public internet
+alpha = 0.5
+k = 1.0
+hysteresis_n = 3
+hysteresis_band = 0.2
+timeout_mult = 2.0
+
+[[ets]]
+name = "default"
+tier = "general"

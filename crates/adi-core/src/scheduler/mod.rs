@@ -190,6 +190,29 @@ impl Scheduler {
         self.resolver.waiting()
     }
 
+    /// Register one more node at runtime (the service learns nodes as they
+    /// connect). Returns its id. Before any measurement it may only take from
+    /// the slowest ET its hardware allows.
+    pub fn add_node(&mut self, c: u64, tier: &str) -> NodeId {
+        let lvl = tier_level(tier);
+        let n_et = self.ets.len();
+        self.nodes.push(NodeEntry {
+            c,
+            tier_level: lvl,
+            est: Estimate::new(),
+            in_flight: None,
+            eligible: Self::initial_eligibility(&self.ets, lvl),
+            pass_count: vec![0; n_et],
+            transitions: 0,
+            last_seen: 0.0,
+        });
+        self.nodes.len() - 1
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
     pub fn has_in_flight(&self, node: NodeId) -> bool {
         self.nodes[node].in_flight.is_some()
     }
