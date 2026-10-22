@@ -25,9 +25,21 @@ pub struct EventRecord {
     /// First time a node asked for work and got none while this Event was
     /// incomplete; None if that never happened.
     pub first_starve_at: Option<f64>,
+    pub reclaims: u32,
+    /// (time, Event cost still remaining then, Σ r_true online then) of the last reclaim.
+    pub last_reclaim: Option<(f64, f64, f64)>,
 }
 
 impl EventRecord {
+    /// V4: time from the last reclaim to completion, and its bound
+    /// 2W + the Event's remaining cost at that moment ÷ Σ r of the nodes still online.
+    pub fn after_reclaim(&self, w: f64) -> Option<(f64, f64)> {
+        self.last_reclaim.map(|(t, remaining, sum_r)| {
+            let bound = 2.0 * w + if sum_r > 0.0 { remaining / sum_r } else { f64::INFINITY };
+            ((self.completed_at - t).max(0.0), bound)
+        })
+    }
+
     pub fn tail_wait(&self) -> f64 {
         match self.first_starve_at {
             Some(t) => (self.completed_at - t).max(0.0),
@@ -52,6 +64,9 @@ pub struct Metrics {
     pub sum_r_true: f64,
     /// ET eligibility changes (promotions + demotions) summed over nodes.
     pub transitions: u64,
+    pub duplicate_results: u64,
+    pub late_results: u64,
+    pub churn_events: u64,
 }
 
 pub struct Verdicts {
@@ -66,6 +81,10 @@ pub struct Verdicts {
     pub v1_pass: Option<bool>,
     pub v2_max_tail: f64,
     pub v2_pass: bool,
+    /// V4: worst (actual − bound) over Events touched by a reclaim; None if no reclaim.
+    pub v4_worst_excess: Option<f64>,
+    pub v4_events: usize,
+    pub v4_pass: Option<bool>,
 }
 
 impl Metrics {
@@ -89,7 +108,14 @@ impl Metrics {
             (Some(max - min), Some(q(0.95) - q(0.05)), Some(mean), Some(max - min <= 0.2 * w))
         };
         let v2_max_tail = self.events.iter().map(|e| e.tail_wait()).fold(0.0, f64::max);
-        Verdicts { w, ideal_makespan, efficiency, v1_spread, v1_spread_p90, v1_mean, v1_pass, v2_max_tail, v2_pass: v2_max_tail <= w }
+        let v4: Vec<(f64, f64)> = self.events.iter().filter_map(|e| e.after_reclaim(w)).collect();
+        let (v4_worst_excess, v4_events, v4_pass) = if v4.is_empty() {
+            (None, 0, None)
+        } else {
+            let worst = v4.iter().map(|(a, b)| a - b).fold(f64::NEG_INFINITY, f64::max);
+            (Some(worst), v4.len(), Some(worst <= 0.0))
+        };
+        Verdicts { w, ideal_makespan, efficiency, v1_spread, v1_spread_p90, v1_mean, v1_pass, v2_max_tail, v2_pass: v2_max_tail <= w, v4_worst_excess, v4_events, v4_pass }
     }
 
     pub fn write_all(&self, dir: &Path, w: f64, node_truth: &[(String, f64, f64)]) -> std::io::Result<String> {
@@ -116,8 +142,9 @@ impl Metrics {
         wtr.flush()?;
 
         let mut wtr = csv::Writer::from_path(dir.join("batches.csv"))?;
-        wtr.write_record(["event", "submitted_at", "completed_at", "makespan", "first_starve_at", "tail_wait"])?;
+        wtr.write_record(["event", "submitted_at", "completed_at", "makespan", "first_starve_at", "tail_wait", "reclaims", "after_last_reclaim", "v4_bound"])?;
         for e in &self.events {
+            let (after, bound) = e.after_reclaim(w).map(|(a, b)| (fmt(a), fmt(b))).unwrap_or_default();
             wtr.write_record([
                 e.event.to_string(),
                 fmt(e.submitted_at),
@@ -125,6 +152,9 @@ impl Metrics {
                 fmt(e.completed_at - e.submitted_at),
                 e.first_starve_at.map(fmt).unwrap_or_default(),
                 fmt(e.tail_wait()),
+                e.reclaims.to_string(),
+                after,
+                bound,
             ])?;
         }
         wtr.flush()?;
@@ -165,7 +195,15 @@ impl Metrics {
         let _ = writeln!(s, "V2 max tail wait over {} events: {:.4} s, limit {:.4} s -> {}",
             self.events.len(), v.v2_max_tail, w, pf(v.v2_pass));
         let _ = writeln!(s, "ET eligibility transitions (all nodes): {}", self.transitions);
-        let _ = writeln!(s, "V4: not in stage 1");
+        let _ = writeln!(s, "churn: {} offline incidents, {} units reissued, {} late results, {} duplicate results dropped",
+            self.churn_events, self.reissued_units, self.late_results, self.duplicate_results);
+        match (v.v4_worst_excess, v.v4_pass) {
+            (Some(x), Some(pass)) => {
+                let _ = writeln!(s, "V4 over {} Events touched by a reclaim: worst (time after last reclaim − bound) = {x:+.4} s, bound = 2W + remaining ÷ Σr_online -> {}",
+                    v.v4_events, pf(pass));
+            }
+            _ => { let _ = writeln!(s, "V4: no reclaims in this run -> N/A"); }
+        }
         s
     }
 }

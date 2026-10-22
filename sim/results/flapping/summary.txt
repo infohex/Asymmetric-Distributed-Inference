@@ -12,5 +12,6 @@ per node: name, r_true, r_est(final), steady rounds, mean round duration, idle r
 V1 steady-state round duration: mean 0.9757 s, spread max-min 0.3037 s (P95-P5 0.1391 s), limit 0.2000 s -> FAIL
 V2 max tail wait over 40 events: 0.5341 s, limit 1.0000 s -> PASS
 ET eligibility transitions (all nodes): 1
-V4: not in stage 1
+churn: 0 offline incidents, 0 units reissued, 0 late results, 0 duplicate results dropped
+V4: no reclaims in this run -> N/A
 V3 eligibility transitions: hysteresis (n = 3, band = 0.2) -> 1, none -> 13, reduction 92.3%, limit 80% -> PASS

@@ -1,0 +1,20 @@
+W = 1
+sim time = 240.794 s, rounds = 1836, pulls = 2343 (empty 481), units = 800000, reissued = 11632
+scheduler messages/s = 17.4
+ideal makespan (Σcost ÷ Σ r_true) = 181.818 s, efficiency = 0.755
+
+per node: name, r_true, r_est(final), steady rounds, mean round duration, idle ratio
+     fast1  r_true   1000.00  r_est    934.30  rounds  187  mean 0.9437 s  idle 0.177
+     fast2  r_true   1000.00  r_est   1002.84  rounds  190  mean 0.9365 s  idle 0.182
+     fast3  r_true   1000.00  r_est   1042.62  rounds  183  mean 0.9498 s  idle 0.193
+     fast4  r_true   1000.00  r_est   1033.14  rounds  167  mean 0.9447 s  idle 0.255
+      mid1  r_true    100.00  r_est     98.28  rounds  121  mean 0.9562 s  idle 0.446
+      mid2  r_true    100.00  r_est    113.18  rounds  198  mean 0.9438 s  idle 0.130
+      mid3  r_true    100.00  r_est     94.07  rounds  177  mean 0.9514 s  idle 0.222
+      mid4  r_true    100.00  r_est     94.01  rounds  170  mean 0.9530 s  idle 0.241
+
+V1 steady-state round duration: mean 0.9469 s, spread max-min 0.3383 s (P95-P5 0.1646 s), limit 0.2000 s -> FAIL
+V2 max tail wait over 40 events: 2.1630 s, limit 1.0000 s -> FAIL
+ET eligibility transitions (all nodes): 0
+churn: 28 offline incidents, 11632 units reissued, 0 late results, 0 duplicate results dropped
+V4 over 18 Events touched by a reclaim: worst (time after last reclaim − bound) = -1.4549 s, bound = 2W + remaining ÷ Σr_online -> PASS

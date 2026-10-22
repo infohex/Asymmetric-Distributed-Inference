@@ -1,0 +1,110 @@
+# churn: 8 nodes that drop offline and come back (exponential online / offline
+# durations). A round held by a node that drops is lost; the scheduler
+# reclaims it after timeout_mult * W (or at once when the node reconnects)
+# and reissues it. Nodes also drift (sigma 0.1) so a too-short timeout
+# produces false reclaims of rounds that were merely slow (late results).
+# Checks V4: time from the last reclaim touching an Event to that Event's
+# completion must not exceed 2W + the Event's remaining cost / Σr online.
+
+name = "churn"
+seed = 1
+
+[scheduler]
+w = 1.0
+alpha = 0.3
+k = 1.0
+timeout_mult = 2.0
+
+[[nodes]]
+id = "fast1"
+r_true = 1000.0
+b_true = 1.0e9
+c = 16
+latency = 0.01
+mean_online = 60.0
+mean_offline = 15.0
+noise_sigma = 0.1
+noise_corr_rounds = 20
+
+[[nodes]]
+id = "fast2"
+r_true = 1000.0
+b_true = 1.0e9
+c = 16
+latency = 0.01
+mean_online = 60.0
+mean_offline = 15.0
+noise_sigma = 0.1
+noise_corr_rounds = 20
+
+[[nodes]]
+id = "fast3"
+r_true = 1000.0
+b_true = 1.0e9
+c = 16
+latency = 0.01
+mean_online = 60.0
+mean_offline = 15.0
+noise_sigma = 0.1
+noise_corr_rounds = 20
+
+[[nodes]]
+id = "fast4"
+r_true = 1000.0
+b_true = 1.0e9
+c = 16
+latency = 0.01
+mean_online = 60.0
+mean_offline = 15.0
+noise_sigma = 0.1
+noise_corr_rounds = 20
+
+[[nodes]]
+id = "mid1"
+r_true = 100.0
+b_true = 1.0e8
+c = 4
+latency = 0.01
+mean_online = 60.0
+mean_offline = 15.0
+noise_sigma = 0.1
+noise_corr_rounds = 20
+
+[[nodes]]
+id = "mid2"
+r_true = 100.0
+b_true = 1.0e8
+c = 4
+latency = 0.01
+mean_online = 60.0
+mean_offline = 15.0
+noise_sigma = 0.1
+noise_corr_rounds = 20
+
+[[nodes]]
+id = "mid3"
+r_true = 100.0
+b_true = 1.0e8
+c = 4
+latency = 0.01
+mean_online = 60.0
+mean_offline = 15.0
+noise_sigma = 0.1
+noise_corr_rounds = 20
+
+[[nodes]]
+id = "mid4"
+r_true = 100.0
+b_true = 1.0e8
+c = 4
+latency = 0.01
+mean_online = 60.0
+mean_offline = 15.0
+noise_sigma = 0.1
+noise_corr_rounds = 20
+
+[workload]
+events = 40
+units_per_event = 20000
+unit_bytes = 1024
+arrival = "sequential"

@@ -19,7 +19,7 @@ A scenario passes only when all four hold:
 | V1 | In steady state, spread of round durations (return − issue), excluding slow-start and taper rounds | ≤ 0.2 × W |
 | V2 | Per batch, tail wait (time the earliest-finished node idles until the batch completes) | ≤ 1 × W |
 | V3 | Tier promotions/demotions for a node near a threshold (hysteresis on vs off) | ≥ 80% fewer with hysteresis |
-| V4 | Extra batch delay after an offline node's U are reclaimed and reissued | ≤ 2 × W + that node's round size ÷ remaining total throughput |
+| V4 | Time from the last reclaim touching an Event to that Event's completion | ≤ 2 × W + the Event's remaining cost at that moment ÷ total throughput of nodes online |
 
 Also reported, without a pass line: scheduler messages per second, per-node idle ratio, share of reissued U.
 

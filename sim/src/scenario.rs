@@ -46,6 +46,9 @@ pub struct SchedulerParams {
     /// happens at t > t_max. 0 = none.
     #[serde(default = "default_hysteresis_band")]
     pub hysteresis_band: f64,
+    /// A round not returned within timeout_mult * W is reclaimed and reissued.
+    #[serde(default = "default_timeout_mult")]
+    pub timeout_mult: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -78,6 +81,12 @@ pub struct NodeSpec {
     /// space) that an EWMA can track.
     #[serde(default)]
     pub noise_corr_rounds: f64,
+    /// Mean online duration (s) before the node drops; 0 = never drops.
+    #[serde(default)]
+    pub mean_online: f64,
+    /// Mean offline duration (s) before it returns.
+    #[serde(default)]
+    pub mean_offline: f64,
     #[serde(default = "default_tier")]
     pub tier: String,
 }
@@ -116,6 +125,9 @@ fn default_hysteresis_n() -> u32 {
 }
 fn default_hysteresis_band() -> f64 {
     0.2
+}
+fn default_timeout_mult() -> f64 {
+    2.0
 }
 fn default_tier() -> String {
     "general".to_string()
@@ -208,6 +220,8 @@ pub struct Grid {
     pub alpha: Vec<f64>,
     #[serde(default)]
     pub k: Vec<f64>,
+    #[serde(default)]
+    pub timeout_mult: Vec<f64>,
     /// Seeds to average over for each combination (default: the scenario's seed).
     #[serde(default)]
     pub seeds: Vec<u64>,
@@ -220,9 +234,9 @@ impl SweepSpec {
         toml::from_str(&text).map_err(|e| format!("bad sweep {}: {e}", path.display()))
     }
 
-    /// Every combination of the grid, as (w, alpha, k) triples. An empty axis
-    /// keeps the base scenario's value (None).
-    pub fn combinations(&self) -> Vec<(Option<f64>, Option<f64>, Option<f64>)> {
+    /// Every combination of the grid, as (w, alpha, k, timeout_mult). An
+    /// empty axis keeps the base scenario's value (None).
+    pub fn combinations(&self) -> Vec<(Option<f64>, Option<f64>, Option<f64>, Option<f64>)> {
         let axis = |v: &Vec<f64>| -> Vec<Option<f64>> {
             if v.is_empty() { vec![None] } else { v.iter().map(|x| Some(*x)).collect() }
         };
@@ -230,7 +244,9 @@ impl SweepSpec {
         for w in axis(&self.grid.w) {
             for a in axis(&self.grid.alpha) {
                 for k in axis(&self.grid.k) {
-                    out.push((w, a, k));
+                    for t in axis(&self.grid.timeout_mult) {
+                        out.push((w, a, k, t));
+                    }
                 }
             }
         }

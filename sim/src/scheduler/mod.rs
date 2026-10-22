@@ -50,6 +50,16 @@ struct InFlight {
     issued_at: f64,
     cost: f64,
     et: usize,
+    units: Vec<ReadyUnit>,
+}
+
+/// Units handed back to an ET after a timeout or a reconnect.
+#[derive(Debug, Clone)]
+pub struct Reclaim {
+    pub node: NodeId,
+    pub et: usize,
+    pub units: Vec<UnitId>,
+    pub cost: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +74,9 @@ struct NodeEntry {
     pass_count: Vec<u32>,
     /// Count of eligibility changes (promotions + demotions) over all ETs.
     transitions: u64,
+    /// Last pull or result from this node. An idle node pulls every
+    /// retry_delay, so silence longer than a couple of those means it is gone.
+    last_seen: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -96,6 +109,10 @@ pub struct Scheduler {
     params: SchedulerParams,
     nodes: Vec<NodeEntry>,
     ets: Vec<Trench>,
+    /// Per unit: a result has been accepted (first result wins).
+    done: Vec<bool>,
+    pub duplicate_results: u64,
+    pub late_results: u64,
 }
 
 impl Scheduler {
@@ -129,10 +146,65 @@ impl Scheduler {
                     eligible: Self::initial_eligibility(&trenches, lvl),
                     pass_count: vec![0; n_et],
                     transitions: 0,
+                    last_seen: 0.0,
                 }
             })
             .collect();
-        Scheduler { params, nodes, ets: trenches }
+        Scheduler { params, nodes, ets: trenches, done: Vec::new(), duplicate_results: 0, late_results: 0 }
+    }
+
+    pub fn has_in_flight(&self, node: NodeId) -> bool {
+        self.nodes[node].in_flight.is_some()
+    }
+
+    pub fn timeout(&self, et: usize) -> f64 {
+        self.params.timeout_mult * self.ets[et].w
+    }
+
+    fn put_back(&mut self, et: usize, units: &[ReadyUnit]) -> (Vec<UnitId>, f64) {
+        let t = &mut self.ets[et];
+        let mut ids = Vec::with_capacity(units.len());
+        let mut cost = 0.0;
+        // Front of the queue: they were due before anything behind them.
+        for u in units.iter().rev() {
+            if !self.done[u.id] {
+                t.ready.push_front(*u);
+                t.ready_cost += u.cost;
+                ids.push(u.id);
+                cost += u.cost;
+            }
+        }
+        ids.reverse();
+        (ids, cost)
+    }
+
+    /// Reclaim every round older than its ET's timeout.
+    pub fn check_timeouts(&mut self, now: f64) -> Vec<Reclaim> {
+        let mut out = Vec::new();
+        for node in 0..self.nodes.len() {
+            let expired = match &self.nodes[node].in_flight {
+                Some(f) => now - f.issued_at > self.timeout(f.et),
+                None => false,
+            };
+            if expired {
+                let f = self.nodes[node].in_flight.take().unwrap();
+                let (units, cost) = self.put_back(f.et, &f.units);
+                // No observation came back; treat it as a failed qualification.
+                for c in self.nodes[node].pass_count.iter_mut() {
+                    *c = 0;
+                }
+                out.push(Reclaim { node, et: f.et, units, cost });
+            }
+        }
+        out
+    }
+
+    /// A node announced itself again. Whatever it still held is reissued now
+    /// rather than at the timeout.
+    pub fn node_reconnected(&mut self, node: NodeId) -> Option<Reclaim> {
+        let f = self.nodes[node].in_flight.take()?;
+        let (units, cost) = self.put_back(f.et, &f.units);
+        Some(Reclaim { node, et: f.et, units, cost })
     }
 
     fn initial_eligibility(ets: &[Trench], lvl: u8) -> Vec<bool> {
@@ -172,6 +244,9 @@ impl Scheduler {
     }
 
     pub fn enqueue(&mut self, et: usize, id: UnitId, cost: f64, bytes: u64) {
+        if self.done.len() <= id {
+            self.done.resize(id + 1, false);
+        }
         let t = &mut self.ets[et];
         t.ready.push_back(ReadyUnit { id, cost, bytes });
         t.ready_cost += cost;
@@ -183,6 +258,7 @@ impl Scheduler {
     /// The round may be empty.
     pub fn pull(&mut self, node: NodeId, now: f64) -> Round {
         assert!(self.nodes[node].in_flight.is_none(), "node {node} pulled while a round is in flight");
+        self.nodes[node].last_seen = now;
         let eligible_somewhere = self.nodes[node].eligible.iter().any(|&e| e);
         let lvl = self.nodes[node].tier_level;
         let candidates: Vec<(usize, bool)> = if eligible_somewhere {
@@ -203,7 +279,7 @@ impl Scheduler {
         for (et, probe) in candidates {
             let (quota_cost, kind, r_est) = self.quota(node, et, now, probe);
             let t = &mut self.ets[et];
-            let mut units = Vec::new();
+            let mut taken: Vec<ReadyUnit> = Vec::new();
             let mut cost = 0.0;
             let mut bytes = 0;
             while let Some(u) = t.ready.front() {
@@ -213,16 +289,17 @@ impl Scheduler {
                 let u = t.ready.pop_front().unwrap();
                 cost += u.cost;
                 bytes += u.bytes;
-                units.push(u.id);
+                taken.push(u);
             }
-            if units.is_empty() {
+            if taken.is_empty() {
                 continue;
             }
             t.ready_cost -= cost;
             if t.ready_cost < 1e-9 {
                 t.ready_cost = 0.0;
             }
-            self.nodes[node].in_flight = Some(InFlight { issued_at: now, cost, et });
+            let units: Vec<UnitId> = taken.iter().map(|u| u.id).collect();
+            self.nodes[node].in_flight = Some(InFlight { issued_at: now, cost, et, units: taken });
             return Round { units, cost, bytes, kind, r_est, et };
         }
         Round { units: Vec::new(), cost: 0.0, bytes: 0, kind: RoundKind::Normal, r_est: 0.0, et: 0 }
@@ -243,11 +320,13 @@ impl Scheduler {
             return (q, RoundKind::SlowStart, r_i);
         }
         // Σ r over the nodes actually serving this ET right now: eligible,
-        // with an estimate, and either idle or running a round from this
-        // ET. A node busy in another ET is not a server of this one (it
-        // only drops down when its own ET is empty), so counting it would
-        // shrink everyone else's share and leave the remainder to a node
-        // that never comes. Same set for the "fastest node" remainder rule.
+        // with an estimate, alive (heard from recently or holding a round),
+        // and either idle or running a round from this ET. A node busy in
+        // another ET is not a server of this one (it only drops down when
+        // its own ET is empty), and a silent node is probably gone; counting
+        // either would shrink everyone else's share and leave the remainder
+        // to a node that never comes. Same set for the "fastest node" rule.
+        let silence = 2.0 * self.retry_delay();
         let mut sum_r = 0.0;
         let mut remaining_other = 0.0;
         let mut max_r = 0.0_f64;
@@ -256,7 +335,7 @@ impl Scheduler {
                 continue;
             }
             let serving_here = match &n.in_flight {
-                None => true,
+                None => j == node || now - n.last_seen <= silence,
                 Some(f) => f.et == et,
             };
             if !serving_here {
@@ -288,14 +367,34 @@ impl Scheduler {
     }
 
     /// A round came back. Updates the node's estimate and its ET eligibility.
-    pub fn round_done(&mut self, obs: Observation) {
+    /// Returns the units whose result is accepted (first result wins; a late
+    /// round after a reclaim only counts for units not yet done).
+    pub fn round_done(&mut self, obs: Observation, units: &[UnitId]) -> Vec<UnitId> {
         let w = self.params.w;
         let alpha = self.params.alpha;
         let k = self.params.k;
         let n_hyst = self.params.hysteresis_n.max(1);
+        let mut accepted = Vec::with_capacity(units.len());
+        for &u in units {
+            if self.done[u] {
+                self.duplicate_results += 1;
+            } else {
+                self.done[u] = true;
+                accepted.push(u);
+            }
+        }
         let entry = &mut self.nodes[obs.node];
-        let f = entry.in_flight.take().expect("round_done without a round in flight");
-        debug_assert!((f.issued_at - obs.issued_at).abs() < 1e-9);
+        entry.last_seen = obs.returned_at;
+        let late = match &entry.in_flight {
+            Some(f) => (f.issued_at - obs.issued_at).abs() > 1e-9,
+            None => true,
+        };
+        if late {
+            // Already reclaimed (or superseded): still a measurement, no round to close.
+            self.late_results += 1;
+        } else {
+            entry.in_flight = None;
+        }
         let duration = (obs.returned_at - obs.issued_at).max(1e-9);
         let r_round = obs.cost / duration;
         let b_round = obs.bytes as f64 / duration;
@@ -331,5 +430,6 @@ impl Scheduler {
                 entry.pass_count[i] = 0;
             }
         }
+        accepted
     }
 }

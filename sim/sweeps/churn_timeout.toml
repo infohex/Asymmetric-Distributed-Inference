@@ -1,0 +1,8 @@
+# Sweep the timeout multiplier on the churn scenario: a short timeout
+# recovers lost rounds sooner but reclaims rounds that were merely slow.
+name = "churn_timeout_sweep"
+scenario = "../scenarios/churn.toml"
+
+[grid]
+timeout_mult = [1.1, 1.25, 1.5, 2.0, 3.0]
+seeds = [1, 2, 3, 4, 5]

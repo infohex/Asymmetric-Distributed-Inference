@@ -9,6 +9,7 @@ use crate::scheduler::{Observation, RoundKind, Scheduler};
 use crate::workload::{Arrival, EventId, UnitId, Workload};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand_distr::{Distribution, Exp};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -16,6 +17,7 @@ enum Event {
     Pull(NodeId),
     RoundDone {
         node: NodeId,
+        epoch: u64,
         issued_at: f64,
         units: Vec<UnitId>,
         cost: f64,
@@ -25,6 +27,9 @@ enum Event {
         r_true_eff: f64,
     },
     Arrival(EventId),
+    NodeOffline(NodeId),
+    NodeOnline(NodeId),
+    TimeoutCheck,
 }
 
 struct Scheduled {
@@ -65,6 +70,14 @@ pub struct Simulation {
     sim_end: f64,
     /// ET index per Event.
     event_et: Vec<usize>,
+    /// Per Event: time of the last reclaim that touched it, the Event's
+    /// remaining cost at that moment (reclaimed units included), and Σ r_true
+    /// of the nodes online then (V4 bound).
+    last_reclaim: Vec<Option<(f64, f64, f64)>>,
+    /// Per Event: cost of units whose result has been accepted.
+    done_cost: Vec<f64>,
+    reclaims_per_event: Vec<u32>,
+    churn_events: u64,
 }
 
 impl Simulation {
@@ -98,6 +111,10 @@ impl Simulation {
             busy: vec![0.0; n_nodes],
             sim_end: sc.sim_end,
             event_et,
+            last_reclaim: vec![None; n_events],
+            done_cost: vec![0.0; n_events],
+            reclaims_per_event: vec![0; n_events],
+            churn_events: 0,
         }
     }
 
@@ -124,7 +141,13 @@ impl Simulation {
         // Every node asks for work at t = 0 (after arrivals, by seq order).
         for n in 0..self.nodes.len() {
             self.schedule(0.0, Event::Pull(n));
+            if self.nodes[n].mean_online > 0.0 && self.nodes[n].mean_offline > 0.0 {
+                let d = self.exp(self.nodes[n].mean_online);
+                self.schedule(d, Event::NodeOffline(n));
+            }
         }
+        let tick = self.scheduler.retry_delay();
+        self.schedule(tick, Event::TimeoutCheck);
 
         while let Some(Scheduled { time, event, .. }) = self.queue.pop() {
             if time > self.sim_end {
@@ -135,9 +158,15 @@ impl Simulation {
             match event {
                 Event::Arrival(e) => self.on_arrival(e),
                 Event::Pull(n) => self.on_pull(n),
-                Event::RoundDone { node, issued_at, units, cost, bytes, kind, r_est, r_true_eff } => {
-                    self.on_round_done(node, issued_at, units, cost, bytes, kind, r_est, r_true_eff)
+                Event::RoundDone { node, epoch, issued_at, units, cost, bytes, kind, r_est, r_true_eff } => {
+                    if self.nodes[node].online && self.nodes[node].epoch == epoch {
+                        self.on_round_done(node, issued_at, units, cost, bytes, kind, r_est, r_true_eff)
+                    }
+                    // else: the node dropped while this round was in flight; the result is lost.
                 }
+                Event::NodeOffline(n) => self.on_offline(n),
+                Event::NodeOnline(n) => self.on_online(n),
+                Event::TimeoutCheck => self.on_timeout_check(),
             }
             if self.workload.all_complete() {
                 break;
@@ -148,6 +177,9 @@ impl Simulation {
         self.metrics.busy =
             self.nodes.iter().zip(&self.busy).map(|(n, b)| (n.name.clone(), *b)).collect();
         self.metrics.transitions = self.nodes.iter().map(|n| self.scheduler.transitions(n.id)).sum();
+        self.metrics.duplicate_results = self.scheduler.duplicate_results;
+        self.metrics.late_results = self.scheduler.late_results;
+        self.metrics.churn_events = self.churn_events;
         let truth = self
             .nodes
             .iter()
@@ -167,8 +199,69 @@ impl Simulation {
         }
     }
 
+    fn exp(&mut self, mean: f64) -> f64 {
+        Exp::new(1.0 / mean).expect("positive mean").sample(&mut self.rng)
+    }
+
+    fn sum_r_true_online(&self) -> f64 {
+        self.nodes.iter().filter(|n| n.online).map(|n| n.r_true).sum()
+    }
+
+    fn note_reclaim(&mut self, units: &[UnitId], cost: f64) {
+        if std::env::var_os("SIM_TRACE").is_some() {
+            eprintln!("{:10.3} reclaim {} units (cost {cost})", self.now, units.len());
+        }
+        self.metrics.reissued_units += units.len() as u64;
+        let sum_r = self.sum_r_true_online();
+        let mut touched: Vec<EventId> = units.iter().map(|&u| self.workload.units[u].event).collect();
+        touched.sort_unstable();
+        touched.dedup();
+        let _ = cost;
+        for e in touched {
+            let total: f64 = self.workload.events[e].units.iter().map(|&u| self.workload.units[u].cost).sum();
+            let remaining = (total - self.done_cost[e]).max(0.0);
+            self.last_reclaim[e] = Some((self.now, remaining, sum_r));
+            self.reclaims_per_event[e] += 1;
+        }
+    }
+
+    fn on_offline(&mut self, node: NodeId) {
+        if std::env::var_os("SIM_TRACE").is_some() {
+            eprintln!("{:10.3} offline {} (in flight: {})", self.now, self.nodes[node].name, self.scheduler.has_in_flight(node));
+        }
+        self.nodes[node].online = false;
+        self.nodes[node].epoch += 1;
+        self.churn_events += 1;
+        let d = self.exp(self.nodes[node].mean_offline);
+        self.schedule(self.now + d, Event::NodeOnline(node));
+    }
+
+    fn on_online(&mut self, node: NodeId) {
+        if std::env::var_os("SIM_TRACE").is_some() {
+            eprintln!("{:10.3} online  {}", self.now, self.nodes[node].name);
+        }
+        self.nodes[node].online = true;
+        if let Some(r) = self.scheduler.node_reconnected(node) {
+            self.note_reclaim(&r.units, r.cost);
+        }
+        self.schedule(self.now, Event::Pull(node));
+        let d = self.exp(self.nodes[node].mean_online);
+        self.schedule(self.now + d, Event::NodeOffline(node));
+    }
+
+    fn on_timeout_check(&mut self) {
+        let reclaimed = self.scheduler.check_timeouts(self.now);
+        for r in reclaimed {
+            self.note_reclaim(&r.units, r.cost);
+        }
+        let tick = self.scheduler.retry_delay();
+        if !self.workload.all_complete() {
+            self.schedule(self.now + tick, Event::TimeoutCheck);
+        }
+    }
+
     fn on_pull(&mut self, node: NodeId) {
-        if !self.nodes[node].online {
+        if !self.nodes[node].online || self.scheduler.has_in_flight(node) {
             return;
         }
         self.metrics.pulls += 1;
@@ -193,10 +286,12 @@ impl Simulation {
             self.nodes[node].round_duration(round.cost, round.bytes, &mut self.rng);
         self.busy[node] += duration;
         let done_at = self.now + duration;
+        let epoch = self.nodes[node].epoch;
         self.schedule(
             done_at,
             Event::RoundDone {
                 node,
+                epoch,
                 issued_at: self.now,
                 units: round.units,
                 cost: round.cost,
@@ -220,13 +315,10 @@ impl Simulation {
         r_est: f64,
         r_true_eff: f64,
     ) {
-        self.scheduler.round_done(Observation {
-            node,
-            issued_at,
-            returned_at: self.now,
-            cost,
-            bytes,
-        });
+        let accepted = self.scheduler.round_done(
+            Observation { node, issued_at, returned_at: self.now, cost, bytes },
+            &units,
+        );
         self.metrics.rounds.push(RoundRecord {
             node: self.nodes[node].name.clone(),
             issued_at,
@@ -240,8 +332,9 @@ impl Simulation {
         });
 
         let mut completed: Vec<EventId> = Vec::new();
-        for id in units {
+        for id in accepted {
             let e = self.workload.units[id].event;
+            self.done_cost[e] += self.workload.units[id].cost;
             let ev = &mut self.workload.events[e];
             ev.done += 1;
             if ev.is_complete() && ev.completed_at.is_none() {
@@ -256,6 +349,8 @@ impl Simulation {
                 submitted_at: ev.submitted_at.unwrap_or(0.0),
                 completed_at: self.now,
                 first_starve_at: self.first_starve[e],
+                reclaims: self.reclaims_per_event[e],
+                last_reclaim: self.last_reclaim[e],
             });
             let chain = self.workload.events[e].workload;
             if self.workload.arrivals[chain] == Arrival::Sequential {

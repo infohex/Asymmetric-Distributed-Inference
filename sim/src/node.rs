@@ -23,6 +23,11 @@ pub struct TrueNode {
     noise_x: f64,
     pub tier: String,
     pub online: bool,
+    pub mean_online: f64,
+    pub mean_offline: f64,
+    /// Bumped on every offline transition; a round issued in an earlier
+    /// epoch never returns.
+    pub epoch: u64,
 }
 
 impl TrueNode {
@@ -44,6 +49,9 @@ impl TrueNode {
             noise_x: 0.0,
             tier: spec.tier.clone(),
             online: true,
+            mean_online: spec.mean_online,
+            mean_offline: spec.mean_offline,
+            epoch: 0,
         }
     }
 

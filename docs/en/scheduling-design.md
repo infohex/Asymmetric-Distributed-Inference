@@ -228,7 +228,11 @@ This shrinks the window to R ÷ Σr so all nodes finish the final round together
 
 Both Σr and "the node with the largest r" count only the **nodes actually serving this ET now**: idle ones, or ones whose in-flight round came from this ET. A node busy in another ET does not count; it only drops down once its own ET is empty. A node that gets a zero share in one ET (remainder reserved for a faster node) moves on to the next ET it qualifies for. (Simulator stage 3: without this, the slow ET's remainder waited for a fast node that never came and a 500-U Event stalled for 310 s.)
 
-**Timeout reclaim.** A round not returned after k × W is treated as offline and its U go back to the ET for reissue. If the node later returns them, the first result wins and duplicates are discarded. The timeout multiplier may be personalized from a node's online history.
+**Timeout reclaim.** A round not returned after k × W is treated as offline and its U go back to the front of the ET for reissue; when a node reconnects while the scheduler still holds its in-flight round, that round is reclaimed at once rather than at the timeout. If the node later returns them, the first result wins and duplicates are discarded. The timeout multiplier may be personalized from a node's online history.
+
+**Liveness.** The scheduler does not know who is offline, but an idle node pulls every W/4, so last contact is the liveness signal: a node with nothing in flight and no contact for two pull periods is left out of Σr and the "fastest node" rule. (Simulator stage 4: without this, a dropped node whose round had been reclaimed still looked "idle and fastest", the remainder was reserved for it, and efficiency was 0.54; with it, 0.78 against the 0.80 ceiling set by the 20% offline fraction.)
+
+When a node drops at the end of an Event, the others can only wait for the timeout reclaim, so with churn the tail bound becomes timeout multiplier × W + redo time, no longer 1 × W; the optional straggler duplication would bring it back down.
 
 **Idempotency requirement.** U may be reissued or duplicated, so execution must be side-effect free and repeatable. Results carry u_id and the scheduler deduplicates by id.
 
