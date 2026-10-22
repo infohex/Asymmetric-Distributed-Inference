@@ -1,0 +1,6 @@
+# Sweep W on the basic scenario: communication cost vs batch-boundary tightness.
+name = "basic_w_sweep"
+scenario = "../scenarios/basic.toml"
+
+[grid]
+w = [0.25, 0.5, 1.0, 2.0, 4.0]

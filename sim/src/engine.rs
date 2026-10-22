@@ -76,6 +76,8 @@ impl Simulation {
         let n_nodes = nodes.len();
         let mut metrics = Metrics::default();
         metrics.total_units = workload.units.len() as u64;
+        metrics.total_cost = workload.units.iter().map(|u| u.cost).sum();
+        metrics.sum_r_true = nodes.iter().map(|n| n.r_true).sum();
         Simulation {
             now: 0.0,
             seq: 0,

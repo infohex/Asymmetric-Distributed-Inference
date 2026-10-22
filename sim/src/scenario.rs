@@ -46,6 +46,11 @@ pub struct NodeSpec {
     /// Sigma of the log-normal multiplicative noise on r_true per round (0 = none).
     #[serde(default)]
     pub noise_sigma: f64,
+    /// Correlation time of the noise in rounds. 0 = independent per round
+    /// (i.i.d.); larger values make the noise a slow drift (AR(1) in log
+    /// space) that an EWMA can track.
+    #[serde(default)]
+    pub noise_corr_rounds: f64,
     #[serde(default = "default_tier")]
     pub tier: String,
 }
@@ -119,5 +124,52 @@ impl Scenario {
             "all_at_once" | "sequential" => Ok(()),
             other => Err(format!("workload.arrival: unknown mode {other:?}")),
         }
+    }
+}
+
+/// Parameter sweep: a base scenario plus a grid of scheduler overrides.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SweepSpec {
+    pub name: String,
+    /// Path of the base scenario, relative to the sweep file's directory.
+    pub scenario: String,
+    pub grid: Grid,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Grid {
+    #[serde(default)]
+    pub w: Vec<f64>,
+    #[serde(default)]
+    pub alpha: Vec<f64>,
+    #[serde(default)]
+    pub k: Vec<f64>,
+    /// Seeds to average over for each combination (default: the scenario's seed).
+    #[serde(default)]
+    pub seeds: Vec<u64>,
+}
+
+impl SweepSpec {
+    pub fn load(path: &Path) -> Result<SweepSpec, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        toml::from_str(&text).map_err(|e| format!("bad sweep {}: {e}", path.display()))
+    }
+
+    /// Every combination of the grid, as (w, alpha, k) triples. An empty axis
+    /// keeps the base scenario's value (None).
+    pub fn combinations(&self) -> Vec<(Option<f64>, Option<f64>, Option<f64>)> {
+        let axis = |v: &Vec<f64>| -> Vec<Option<f64>> {
+            if v.is_empty() { vec![None] } else { v.iter().map(|x| Some(*x)).collect() }
+        };
+        let mut out = Vec::new();
+        for w in axis(&self.grid.w) {
+            for a in axis(&self.grid.alpha) {
+                for k in axis(&self.grid.k) {
+                    out.push((w, a, k));
+                }
+            }
+        }
+        out
     }
 }
