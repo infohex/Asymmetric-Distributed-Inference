@@ -56,3 +56,7 @@ flowchart TB
 ## 状态
 
 设计阶段，尚无实现。待定问题见设计文档末尾。
+
+## 许可证
+
+Copyright (c) 2026 BO LI。以 [PolyForm Noncommercial License 1.0.0](LICENSE) 发布：个人、学术和非营利用途免费，禁止商业用途。

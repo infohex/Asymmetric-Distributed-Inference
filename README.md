@@ -56,3 +56,7 @@ Three layers, three responsibilities:
 ## Status
 
 Design stage. No implementation yet. See the open questions at the end of the design document.
+
+## License
+
+Copyright (c) 2026 BO LI. Released under the [PolyForm Noncommercial License 1.0.0](LICENSE): free for personal, academic and non-profit use; commercial use is not permitted.
