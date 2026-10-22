@@ -1,7 +1,7 @@
 //! Dependency resolver: releases a Unity into its ET only when every
 //! prerequisite has completed. Nodes never see a waiting U.
 
-use crate::workload::UnitId;
+use crate::types::UnitId;
 use std::collections::HashMap;
 
 #[derive(Default)]

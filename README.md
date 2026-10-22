@@ -58,7 +58,7 @@ Three layers, three responsibilities:
 
 ## Status
 
-Design validated by simulation. The scheduling simulator (`sim/`, Rust) completed all five stages; each scenario's `sim/results/<name>/summary.txt` holds the measured V1–V4 verdicts, and the mechanism fixes it forced are recorded inline in the design document. Next: the shape-A prototype.
+Design validated by simulation. The scheduling logic is a library crate (`crates/adi-core`) shared by the simulator and the upcoming scheduler service. The scheduling simulator (`sim/`, Rust) completed all five stages; each scenario's `sim/results/<name>/summary.txt` holds the measured V1–V4 verdicts, and the mechanism fixes it forced are recorded inline in the design document. Next: the shape-A prototype.
 
 ## License
 

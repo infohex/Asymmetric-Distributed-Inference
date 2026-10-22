@@ -2,10 +2,10 @@
 //! scheduler and the workload, and is the only place where truth and
 //! observation meet.
 
-use crate::metrics::{EventRecord, Metrics, RoundRecord};
+use adi_core::metrics::{EventRecord, Metrics, RoundRecord};
 use crate::node::{NodeId, TrueNode};
 use crate::scenario::Scenario;
-use crate::scheduler::{Observation, RoundKind, Scheduler};
+use adi_core::scheduler::{Observation, RoundKind, Scheduler};
 use crate::workload::{Arrival, EventId, UnitId, Workload};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -347,7 +347,7 @@ impl Simulation {
             }
             return;
         }
-        if self.scheduler.ets()[round.et].tier_level > crate::scheduler::tier_level(&self.nodes[node].tier) {
+        if self.scheduler.ets()[round.et].tier_level > adi_core::scheduler::tier_level(&self.nodes[node].tier) {
             self.tier_violations += 1;
         }
         let (duration, r_true_eff) =

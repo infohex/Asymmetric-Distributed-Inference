@@ -1,5 +1,7 @@
 //! Scenario configuration (TOML).
 
+pub use adi_core::{EtSpec, SchedulerParams};
+use adi_core::types::default_tier;
 use serde::Deserialize;
 use std::path::Path;
 
@@ -23,43 +25,6 @@ pub struct Scenario {
     /// when every Event has completed; this only guards against a stall.
     #[serde(default = "default_sim_end")]
     pub sim_end: f64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SchedulerParams {
-    /// Time window W (seconds).
-    pub w: f64,
-    /// EWMA coefficient alpha.
-    #[serde(default = "default_alpha")]
-    pub alpha: f64,
-    /// Safety factor k in r_safe = r - k * sigma.
-    #[serde(default = "default_k")]
-    pub k: f64,
-    /// When a pull yields nothing, the node retries after w * retry_fraction.
-    #[serde(default = "default_retry_fraction")]
-    pub retry_fraction: f64,
-    /// Consecutive qualifying rounds needed to promote a node into an ET
-    /// (demotion always takes one failing round). 1 = no hysteresis.
-    #[serde(default = "default_hysteresis_n")]
-    pub hysteresis_n: u32,
-    /// Value hysteresis: promotion requires t <= t_max * (1 - band); demotion
-    /// happens at t > t_max. 0 = none.
-    #[serde(default = "default_hysteresis_band")]
-    pub hysteresis_band: f64,
-    /// A round not returned within timeout_mult * W is reclaimed and reissued.
-    #[serde(default = "default_timeout_mult")]
-    pub timeout_mult: f64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct EtSpec {
-    pub name: String,
-    #[serde(default = "default_tier")]
-    pub tier: String,
-    /// Per-U time ceiling in seconds; omitted = no ceiling.
-    pub t_max: Option<f64>,
-    /// Window for this ET; omitted = scheduler.w.
-    pub w: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -117,27 +82,6 @@ fn default_seed() -> u64 {
 }
 fn default_sim_end() -> f64 {
     3600.0
-}
-fn default_alpha() -> f64 {
-    0.5
-}
-fn default_k() -> f64 {
-    1.0
-}
-fn default_retry_fraction() -> f64 {
-    0.25
-}
-fn default_hysteresis_n() -> u32 {
-    3
-}
-fn default_hysteresis_band() -> f64 {
-    0.2
-}
-fn default_timeout_mult() -> f64 {
-    2.0
-}
-fn default_tier() -> String {
-    "general".to_string()
 }
 fn default_unit_bytes() -> u64 {
     1024

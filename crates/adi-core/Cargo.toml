@@ -1,0 +1,10 @@
+[package]
+name = "adi-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Scheduling logic for Asymmetric Distributed Inference: node table, Event Trenches, pull quotas, hysteresis, timeouts, dependency resolver, metrics. Shared by the simulator and the scheduler service."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+csv = "1"

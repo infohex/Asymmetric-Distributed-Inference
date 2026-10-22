@@ -2,7 +2,7 @@
 
 use crate::scenario::WorkloadSpec;
 
-pub type UnitId = usize;
+pub use adi_core::UnitId;
 pub type EventId = usize;
 
 #[derive(Debug, Clone)]

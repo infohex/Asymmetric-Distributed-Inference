@@ -8,9 +8,7 @@
 pub mod estimate;
 pub mod resolver;
 
-use crate::node::NodeId;
-use crate::scenario::{EtSpec, SchedulerParams};
-use crate::workload::UnitId;
+use crate::types::{EtSpec, NodeId, SchedulerParams, UnitId};
 use estimate::Estimate;
 use resolver::Resolver;
 use std::collections::VecDeque;

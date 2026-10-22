@@ -5,7 +5,7 @@ use crate::scenario::NodeSpec;
 use rand::Rng;
 use rand_distr::{Distribution, StandardNormal};
 
-pub type NodeId = usize;
+pub use adi_core::NodeId;
 
 #[derive(Debug, Clone)]
 pub struct TrueNode {

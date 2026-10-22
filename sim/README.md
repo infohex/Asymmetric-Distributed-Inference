@@ -2,12 +2,16 @@
 
 Discrete-event simulator for the scheduling mechanism. Design: [docs/en/simulator-design.md](../docs/en/simulator-design.md) · [中文](../docs/zh-CN/simulator-design.md).
 
+The scheduling logic itself lives in `crates/adi-core` (shared with the scheduler service); this crate holds the engine, node model, workload and scenarios. Run from this directory:
+
 ```
-cargo build --release
-./target/release/sim run scenarios/basic.toml            # results/basic/
-./target/release/sim run scenarios/basic.toml --out /tmp/x
-./target/release/sim sweep sweeps/noisy_drift_k.toml     # results/noisy_drift_sweep/sweep.csv
+cargo build --release                                    # builds the whole workspace
+../target/release/sim run scenarios/basic.toml           # results/basic/
+../target/release/sim run scenarios/basic.toml --out /tmp/x
+../target/release/sim sweep sweeps/noisy_drift_k.toml    # results/noisy_drift_sweep/sweep.csv
 ```
+
+On Windows the binary is `..\target\release\sim.exe`.
 
 Exit code 0 when every criterion computed for the scenario passes, 3 when one fails.
 

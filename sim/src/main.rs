@@ -1,8 +1,6 @@
 mod engine;
-mod metrics;
 mod node;
 mod scenario;
-mod scheduler;
 mod workload;
 
 use std::path::{Path, PathBuf};
