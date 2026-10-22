@@ -57,7 +57,7 @@ flowchart TB
 
 ## 状态
 
-设计阶段，尚无实现。待定问题见设计文档末尾。
+设计阶段。调度模拟器（`sim/`，Rust）进行中：第 1 阶段在 basic 场景通过 V1、V2，见 `sim/results/basic/summary.txt`。
 
 ## 许可证
 

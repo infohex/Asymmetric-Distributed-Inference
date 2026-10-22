@@ -1,0 +1,3 @@
+target/
+results/*/rounds.csv
+results/*/batches.csv

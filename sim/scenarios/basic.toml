@@ -1,0 +1,45 @@
+# basic: 2 fast + 2 slow nodes, no noise, no churn, fully parallel Events.
+# Checks V1 (steady-state round duration spread) and V2 (tail wait per Event).
+# Events arrive sequentially so every Event ends with a taper phase.
+
+name = "basic"
+seed = 1
+
+[scheduler]
+w = 1.0
+alpha = 0.3
+k = 1.0
+
+[[nodes]]
+id = "fast1"
+r_true = 1000.0
+b_true = 1.0e9
+c = 16
+latency = 0.01
+
+[[nodes]]
+id = "fast2"
+r_true = 1000.0
+b_true = 1.0e9
+c = 16
+latency = 0.01
+
+[[nodes]]
+id = "slow1"
+r_true = 10.0
+b_true = 1.0e8
+c = 2
+latency = 0.01
+
+[[nodes]]
+id = "slow2"
+r_true = 10.0
+b_true = 1.0e8
+c = 2
+latency = 0.01
+
+[workload]
+events = 10
+units_per_event = 20000
+unit_bytes = 1024
+arrival = "sequential"

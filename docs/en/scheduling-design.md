@@ -196,7 +196,7 @@ Node capacity is derived by the scheduler from the round-trip time of real U. Th
 
 **Measurement.** Node reports carry started_at / finished_at; the scheduler uses them to separate compute time from transfer time. Per round: r_round = n ÷ compute time, B_round = bytes transferred ÷ transfer time.
 
-**Slow start.** A new node takes only c U on its first round (just enough to fill its concurrency). Once that completes, the scheduler has a first real r and B. Subsequent rounds grow with measured values until they stabilize.
+**Slow start.** A new node takes only c U on its first round (just enough to fill its concurrency). Once that completes, the scheduler has a first real r and B. During the ramp each round takes a full window at the latest measurement (α = 1) until two consecutive measurements agree within 5%, then the EWMA takes over. Ramp rounds are excluded from steady-state statistics. (Simulator stage 1: ramping from the first round with α = 0.3 takes a dozen rounds; direct replacement takes 3.)
 
 **Rolling update.** After each round, r is updated with an EWMA:
 
@@ -205,6 +205,8 @@ r_new = α · r_round + (1 − α) · r_old
 ```
 
 B is updated the same way. A rolling standard deviation σ of r is maintained alongside; distribution uses the conservative value r_safe = r − k × σ, so nodes with high variance naturally take less.
+
+**Weight by round length.** Taper rounds are far shorter than W, so the fixed round-trip overhead dominates and their measured r is badly low; updating with full weight collapses the estimate at the end of every batch. Hence α_eff = α × min(1, round duration ÷ W). (Simulator stage 1: unweighted, the estimate fell from 990 to 226; weighted, it holds at 986.)
 
 **Threshold and hysteresis.** ET eligibility is judged on t = c ÷ r. Promotion requires N consecutive qualifying rounds; demotion happens after one failing round. Err on the conservative side: a slow node wrongly admitted to a fast ET holds up a whole batch, whereas a fast node temporarily held in a slower ET costs little.
 
