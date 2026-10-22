@@ -53,7 +53,8 @@ flowchart TB
 - [调度设计](docs/zh-CN/scheduling-design.md) — 完整设计：U / E / ET、IR、状态机、能力评估、取量规则、数据调度、AI 计算延伸、数据结构、参数建议、待定项
 - [IR 算子集 v0](docs/zh-CN/ir-ops-v0.md) — 30 个张量算子、确定性档、硬件档映射（草案待审）
 - [调度模拟器设计](docs/zh-CN/simulator-design.md) — 在写网络代码前用离散事件模拟验证机制（草案待审）
-- English: [Scheduling design](docs/en/scheduling-design.md) · [IR operator set v0](docs/en/ir-ops-v0.md) · [Simulator design](docs/en/simulator-design.md)
+- [形态 A 原型设计](docs/zh-CN/prototype-a-design.md) — 真实机器上的调度端服务 + 节点代理，U 为分块矩阵乘，与模拟器对照（草案待审）
+- English: [Scheduling design](docs/en/scheduling-design.md) · [IR operator set v0](docs/en/ir-ops-v0.md) · [Simulator design](docs/en/simulator-design.md) · [Prototype A design](docs/en/prototype-a-design.md)
 
 ## 状态
 

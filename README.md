@@ -53,7 +53,8 @@ Three layers, three responsibilities:
 - [Scheduling design](docs/en/scheduling-design.md) — full design: U / E / ET, IR, state machine, capacity measurement, pull rules, data scheduling, extension to AI workloads, data structures, parameter defaults, open questions
 - [IR operator set v0](docs/en/ir-ops-v0.md) — the 30 tensor operators, determinism profiles, hardware-tier mapping (draft for review)
 - [Scheduling simulator design](docs/en/simulator-design.md) — discrete-event simulator that validates the mechanism before any network code (draft for review)
-- 中文：[调度设计](docs/zh-CN/scheduling-design.md) · [IR 算子集 v0](docs/zh-CN/ir-ops-v0.md) · [调度模拟器设计](docs/zh-CN/simulator-design.md)
+- [Prototype A design](docs/en/prototype-a-design.md) — scheduler service + node agent on real machines, blocked matmul as the U, comparison against the simulator (draft for review)
+- 中文：[调度设计](docs/zh-CN/scheduling-design.md) · [IR 算子集 v0](docs/zh-CN/ir-ops-v0.md) · [调度模拟器设计](docs/zh-CN/simulator-design.md) · [形态 A 原型设计](docs/zh-CN/prototype-a-design.md)
 
 ## Status
 
