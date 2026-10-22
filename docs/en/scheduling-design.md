@@ -287,16 +287,23 @@ The scheduler keeps three further indexes: prerequisite U → dependent U (unloc
 
 ## 14. Open questions and risks
 
-Pending decisions:
+Decided (2026-10-22):
 
-- [ ] The concrete IR operator list (≤ 30) and each operator's determinism convention (reduction order).
-- [ ] Are nodes owned and controlled, or external and untrusted? External nodes require sampled verification and malicious-node eviction.
-- [ ] Is the scheduler a single instance or several? Multiple instances need a consistency scheme for ET queues and the node table.
-- [ ] Content-addressed storage implementation: central store plus node caches, or pure peer-to-peer?
+| Item | Decision |
+| --- | --- |
+| Node trust model | Designed for untrusted nodes, interfaces reserved; initially only owned machines, verification and eviction not enabled yet |
+| Scheduler | Single instance first; multi-instance consistency deferred |
+| Content-addressed storage | Central store + node caches; peer-to-peer distribution as a later optimization |
+| IR operator list | See [IR Operator Set v0](ir-ops-v0.md) (draft for review) |
+| Language | Rust (scheduler, node agent, simulator) |
+| Hardware tiers | General (CPU) + General GPU first |
+| Order of work | Scheduling simulator first to validate the mechanism (see [Scheduling Simulator — Design](simulator-design.md)), then the shape-A prototype |
+| U cost | No longer assumed uniform: cost = compute cost + data cost (S ÷ B), estimated separately |
 
-Resolved in this version:
+Still pending:
 
-- U cost is no longer assumed uniform: cost = compute cost + data cost (S ÷ B), estimated separately.
+- [ ] The three confirmation items in the IR operator v0 list (scope, gelu form, fast-profile tolerance).
+- [ ] The four confirmation items in the simulator design (pass lines, scenarios, code layering, delivery cadence).
 
 Known risks:
 
