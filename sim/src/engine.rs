@@ -107,6 +107,9 @@ impl Simulation {
         let mut metrics = Metrics::default();
         metrics.total_units = workload.units.len() as u64;
         metrics.total_cost = workload.units.iter().map(|u| u.cost).sum();
+        metrics.noisy = sc.nodes.iter().any(|n| n.noise_sigma > 0.0);
+        metrics.churn = sc.nodes.iter().any(|n| n.mean_online > 0.0 && n.mean_offline > 0.0);
+        metrics.timeout_mult = sc.scheduler.timeout_mult;
         metrics.sum_r_true = nodes.iter().map(|n| n.r_true).sum();
         Simulation {
             now: 0.0,

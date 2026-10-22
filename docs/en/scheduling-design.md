@@ -291,7 +291,7 @@ The scheduler keeps three further indexes: prerequisite U → dependent U (unloc
 | Granularity ratio | 100 | U compute time ÷ fixed per-U overhead |
 | Inline threshold | 4 KB | Inputs below this are embedded in the U, otherwise referenced |
 | Operator set size | ≤ 30 | Initial IR operator count, enough for matrix and inference workloads |
-| α (EWMA coefficient) | 0.3 | Larger reacts faster; use smaller when load fluctuates |
+| α (EWMA coefficient) | 0.5 | Simulator: under drift noise 0.5 gives efficiency 0.93–0.97 vs 0.89–0.92 at 0.1; no difference under i.i.d. noise |
 | k (safety factor) | 1 | r_safe = r − k × σ, covers roughly 84% of variation |
 | Timeout multiplier | 2 × W | May be personalized from node online history |
 | N (promotion hysteresis rounds) | 3 | Three consecutive qualifying rounds to move up; one failing round to move down |

@@ -11,7 +11,7 @@ seed = 1
 
 [scheduler]
 w = 1.0
-alpha = 0.3
+alpha = 0.5
 k = 1.0
 timeout_mult = 2.0
 

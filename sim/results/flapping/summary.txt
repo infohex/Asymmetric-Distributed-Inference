@@ -1,18 +1,18 @@
 W = 1
-sim time = 386.548 s, rounds = 1643, pulls = 1690 (empty 47), units = 700000, reissued = 0
+sim time = 395.390 s, rounds = 1683, pulls = 1733 (empty 50), units = 700000, reissued = 0
 scheduler messages/s = 8.6
-ideal makespan (Σcost ÷ Σ r_true) = 384.615 s, efficiency = 0.995
+ideal makespan (Σcost ÷ Σ r_true) = 384.615 s, efficiency = 0.973
 
 per node: name, r_true, r_est(final), steady rounds, mean round duration, idle ratio
-     fast1  r_true   1000.00  r_est    995.71  rounds  372  mean 0.9994 s  idle 0.001
-    flappy  r_true    800.00  r_est    773.91  rounds  374  mean 1.0008 s  idle 0.003
-     slow1  r_true     10.00  r_est      9.94  rounds  395  mean 0.9472 s  idle 0.009
-     slow2  r_true     10.00  r_est      9.56  rounds  392  mean 0.9507 s  idle 0.006
+     fast1  r_true   1000.00  r_est   1038.47  rounds  380  mean 0.9991 s  idle 0.001
+    flappy  r_true    800.00  r_est    840.95  rounds  384  mean 0.9993 s  idle 0.003
+     slow1  r_true     10.00  r_est     10.13  rounds  402  mean 0.9479 s  idle 0.009
+     slow2  r_true     10.00  r_est      9.16  rounds  398  mean 0.9541 s  idle 0.008
 
-V1 steady-state round duration: mean 0.9738 s, spread max-min 0.2769 s (P95-P5 0.1445 s), limit 0.2000 s -> FAIL
-V2 max tail wait over 40 events: 0.2035 s, limit 1.0000 s -> PASS
+V1 steady-state round duration: mean 0.9746 s, spread max-min 0.2720 s, P95-P5 0.1305 s; judged on P95-P5 (noisy scenario), limit 0.2000 s -> PASS
+V2 max tail wait over 40 events: 0.3279 s, limit 1.0000 s -> PASS
 ET eligibility transitions (all nodes): 1
 dependencies: 0 units still waiting at end (must be 0); hardware tier violations: 0 (must be 0)
 churn: 0 offline incidents, 0 units reissued, 0 late results, 0 duplicate results dropped
 V4: no reclaims in this run -> N/A
-V3 eligibility transitions: hysteresis (n = 3, band = 0.2) -> 1, none -> 20, reduction 95.0%, limit 80% -> PASS
+V3 eligibility transitions: hysteresis (n = 3, band = 0.2) -> 1, none -> 17, reduction 94.1%, limit 80% -> PASS

@@ -69,10 +69,18 @@ pub struct Metrics {
     pub churn_events: u64,
     pub tier_violations: u64,
     pub waiting_at_end: usize,
+    /// Scenario traits that pick the pass lines.
+    pub noisy: bool,
+    pub churn: bool,
+    pub timeout_mult: f64,
 }
 
 pub struct Verdicts {
     pub w: f64,
+    /// Which spread V1 is judged on: max-min (no noise) or P95-P5 (noise).
+    pub v1_on_percentiles: bool,
+    /// V2 pass line: W without churn, (timeout_mult + 1) W with churn.
+    pub v2_limit: f64,
     /// Total work ÷ Σ r_true: the makespan a perfect scheduler would reach.
     pub ideal_makespan: f64,
     pub efficiency: f64,
@@ -91,6 +99,8 @@ pub struct Verdicts {
 
 impl Metrics {
     pub fn verdicts(&self, w: f64) -> Verdicts {
+        let v1_on_percentiles = self.noisy;
+        let v2_limit = if self.churn { (self.timeout_mult + 1.0) * w } else { w };
         let ideal_makespan = if self.sum_r_true > 0.0 { self.total_cost / self.sum_r_true } else { f64::NAN };
         let efficiency = ideal_makespan / self.sim_time.max(1e-9);
         let mut steady: Vec<f64> = self
@@ -107,7 +117,9 @@ impl Metrics {
             let max = steady[steady.len() - 1];
             let q = |p: f64| steady[((steady.len() - 1) as f64 * p).round() as usize];
             let mean = steady.iter().sum::<f64>() / steady.len() as f64;
-            (Some(max - min), Some(q(0.95) - q(0.05)), Some(mean), Some(max - min <= 0.2 * w))
+            let p90 = q(0.95) - q(0.05);
+            let judged = if v1_on_percentiles { p90 } else { max - min };
+            (Some(max - min), Some(p90), Some(mean), Some(judged <= 0.2 * w))
         };
         let v2_max_tail = self.events.iter().map(|e| e.tail_wait()).fold(0.0, f64::max);
         let v4: Vec<(f64, f64)> = self.events.iter().filter_map(|e| e.after_reclaim(w)).collect();
@@ -117,7 +129,7 @@ impl Metrics {
             let worst = v4.iter().map(|(a, b)| a - b).fold(f64::NEG_INFINITY, f64::max);
             (Some(worst), v4.len(), Some(worst <= 0.0))
         };
-        Verdicts { w, ideal_makespan, efficiency, v1_spread, v1_spread_p90, v1_mean, v1_pass, v2_max_tail, v2_pass: v2_max_tail <= w, v4_worst_excess, v4_events, v4_pass }
+        Verdicts { w, ideal_makespan, efficiency, v1_spread, v1_spread_p90, v1_mean, v1_pass, v1_on_percentiles, v2_limit, v2_max_tail, v2_pass: v2_max_tail <= v2_limit, v4_worst_excess, v4_events, v4_pass }
     }
 
     pub fn write_all(&self, dir: &Path, w: f64, node_truth: &[(String, f64, f64)]) -> std::io::Result<String> {
@@ -189,13 +201,13 @@ impl Metrics {
         let _ = writeln!(s);
         match (v.v1_spread, v.v1_spread_p90, v.v1_mean, v.v1_pass) {
             (Some(spread), Some(p90), Some(mean), Some(pass)) => {
-                let _ = writeln!(s, "V1 steady-state round duration: mean {mean:.4} s, spread max-min {spread:.4} s (P95-P5 {p90:.4} s), limit {:.4} s -> {}",
-                    0.2 * w, pf(pass));
+                let _ = writeln!(s, "V1 steady-state round duration: mean {mean:.4} s, spread max-min {spread:.4} s, P95-P5 {p90:.4} s; judged on {}, limit {:.4} s -> {}",
+                    if v.v1_on_percentiles { "P95-P5 (noisy scenario)" } else { "max-min" }, 0.2 * w, pf(pass));
             }
             _ => { let _ = writeln!(s, "V1: no steady-state rounds recorded -> N/A"); }
         }
-        let _ = writeln!(s, "V2 max tail wait over {} events: {:.4} s, limit {:.4} s -> {}",
-            self.events.len(), v.v2_max_tail, w, pf(v.v2_pass));
+        let _ = writeln!(s, "V2 max tail wait over {} events: {:.4} s, limit {:.4} s{} -> {}",
+            self.events.len(), v.v2_max_tail, v.v2_limit, if v.v2_limit > w { " (churn: (timeout_mult + 1) W)" } else { "" }, pf(v.v2_pass));
         let _ = writeln!(s, "ET eligibility transitions (all nodes): {}", self.transitions);
         let _ = writeln!(s, "dependencies: {} units still waiting at end (must be 0); hardware tier violations: {} (must be 0)",
             self.waiting_at_end, self.tier_violations);

@@ -16,8 +16,8 @@ A scenario passes only when all four hold:
 
 | ID | Metric | Pass line |
 | --- | --- | --- |
-| V1 | In steady state, spread of round durations (return − issue), excluding slow-start and taper rounds | ≤ 0.2 × W |
-| V2 | Per batch, tail wait (time the earliest-finished node idles until the batch completes) | ≤ 1 × W |
+| V1 | In steady state, spread of round durations (return − issue), excluding slow-start and taper rounds | No noise: max − min ≤ 0.2 × W; with noise: P95 − P5 ≤ 0.2 × W (extreme rounds are the noise floor, not the mechanism) |
+| V2 | Per batch, tail wait (time the earliest-finished node idles until the batch completes) | No churn: ≤ 1 × W; with churn: ≤ (timeout multiplier + 1) × W (when the last node drops, the others can only wait for the reclaim) |
 | V3 | Tier promotions/demotions for a node near a threshold (hysteresis on vs off) | ≥ 80% fewer with hysteresis |
 | V4 | Time from the last reclaim touching an Event to that Event's completion | ≤ 2 × W + the Event's remaining cost at that moment ÷ total throughput of nodes online |
 

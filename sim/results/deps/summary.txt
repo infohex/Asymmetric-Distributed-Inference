@@ -1,15 +1,15 @@
 W = 1
-sim time = 77.553 s, rounds = 1160, pulls = 2259 (empty 1099), units = 320910, reissued = 0
-scheduler messages/s = 44.1
+sim time = 77.553 s, rounds = 1164, pulls = 2266 (empty 1102), units = 320910, reissued = 0
+scheduler messages/s = 44.2
 ideal makespan (Σcost ÷ Σ r_true) = 72.977 s, efficiency = 0.941
 
 per node: name, r_true, r_est(final), steady rounds, mean round duration, idle ratio
-      gpu1  r_true   2000.00  r_est   1973.44  rounds   69  mean 0.9962 s  idle 0.000
-      gpu2  r_true   2000.00  r_est   1973.44  rounds   69  mean 0.9976 s  idle 0.000
-      cpu1  r_true    200.00  r_est    196.93  rounds   33  mean 0.9841 s  idle 0.377
-      cpu2  r_true    200.00  r_est    196.33  rounds   33  mean 0.9840 s  idle 0.519
+      gpu1  r_true   2000.00  r_est   1972.05  rounds   69  mean 0.9969 s  idle 0.000
+      gpu2  r_true   2000.00  r_est   1972.05  rounds   69  mean 0.9972 s  idle 0.000
+      cpu1  r_true    200.00  r_est    195.86  rounds   33  mean 0.9855 s  idle 0.526
+      cpu2  r_true    200.00  r_est    196.69  rounds   33  mean 0.9827 s  idle 0.369
 
-V1 steady-state round duration: mean 0.9927 s, spread max-min 0.0326 s (P95-P5 0.0225 s), limit 0.2000 s -> PASS
+V1 steady-state round duration: mean 0.9928 s, spread max-min 0.0376 s, P95-P5 0.0276 s; judged on max-min, limit 0.2000 s -> PASS
 V2 max tail wait over 23 events: 0.0200 s, limit 1.0000 s -> PASS
 ET eligibility transitions (all nodes): 2
 dependencies: 0 units still waiting at end (must be 0); hardware tier violations: 0 (must be 0)

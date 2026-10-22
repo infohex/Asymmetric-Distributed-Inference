@@ -119,7 +119,7 @@ fn default_sim_end() -> f64 {
     3600.0
 }
 fn default_alpha() -> f64 {
-    0.3
+    0.5
 }
 fn default_k() -> f64 {
     1.0
