@@ -21,6 +21,10 @@ pub struct Event {
     pub done: usize,
     pub submitted_at: Option<f64>,
     pub completed_at: Option<f64>,
+    /// Which workload (arrival chain) this Event belongs to.
+    pub workload: usize,
+    /// Target ET name (None = first ET).
+    pub et: Option<String>,
 }
 
 impl Event {
@@ -38,27 +42,46 @@ pub enum Arrival {
 pub struct Workload {
     pub units: Vec<Unit>,
     pub events: Vec<Event>,
-    pub arrival: Arrival,
+    /// Arrival mode per workload chain.
+    pub arrivals: Vec<Arrival>,
 }
 
 impl Workload {
-    pub fn generate(spec: &WorkloadSpec) -> Workload {
-        let mut units = Vec::with_capacity(spec.events * spec.units_per_event);
-        let mut events = Vec::with_capacity(spec.events);
-        for e in 0..spec.events {
-            let mut ids = Vec::with_capacity(spec.units_per_event);
-            for _ in 0..spec.units_per_event {
-                let id = units.len();
-                units.push(Unit { id, event: e, cost: 1.0, bytes: spec.unit_bytes });
-                ids.push(id);
+    pub fn generate(specs: &[WorkloadSpec]) -> Workload {
+        let mut units = Vec::new();
+        let mut events = Vec::new();
+        let mut arrivals = Vec::new();
+        for (wi, spec) in specs.iter().enumerate() {
+            for _ in 0..spec.events {
+                let e = events.len();
+                let mut ids = Vec::with_capacity(spec.units_per_event);
+                for _ in 0..spec.units_per_event {
+                    let id = units.len();
+                    units.push(Unit { id, event: e, cost: 1.0, bytes: spec.unit_bytes });
+                    ids.push(id);
+                }
+                events.push(Event {
+                    id: e,
+                    units: ids,
+                    done: 0,
+                    submitted_at: None,
+                    completed_at: None,
+                    workload: wi,
+                    et: spec.et.clone(),
+                });
             }
-            events.push(Event { id: e, units: ids, done: 0, submitted_at: None, completed_at: None });
+            arrivals.push(match spec.arrival.as_str() {
+                "sequential" => Arrival::Sequential,
+                _ => Arrival::AllAtOnce,
+            });
         }
-        let arrival = match spec.arrival.as_str() {
-            "sequential" => Arrival::Sequential,
-            _ => Arrival::AllAtOnce,
-        };
-        Workload { units, events, arrival }
+        Workload { units, events, arrivals }
+    }
+
+    /// The next Event in the same chain after `e`, if any.
+    pub fn next_in_chain(&self, e: EventId) -> Option<EventId> {
+        let w = self.events[e].workload;
+        self.events[e + 1..].iter().find(|x| x.workload == w).map(|x| x.id)
     }
 
     pub fn all_complete(&self) -> bool {

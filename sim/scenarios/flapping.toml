@@ -1,0 +1,82 @@
+# flapping: one node whose per-U time sits right on the fast ET's ceiling
+# (t = c / r_true = 16 / 800 = 0.020 s = t_max) with slowly drifting throughput.
+# k = 0 so the eligibility test is on r itself, not on r - k*sigma.
+# The slow ET carries enough work that every node keeps being measured.
+# Checks V3: hysteresis (n = 3 consecutive rounds to promote, and a 20% value
+# band: promote at t <= 0.8 t_max, demote at t > t_max) must cut ET
+# promotions/demotions by >= 80% against no hysteresis. Stage 3 finding:
+# the round-count hysteresis alone cuts 0-50% under slow drift; the value
+# band is what works, and it must exceed the drift amplitude (~2 sigma).
+
+name = "flapping"
+seed = 1
+
+[scheduler]
+w = 1.0
+alpha = 0.3
+k = 0.0
+hysteresis_n = 3
+hysteresis_band = 0.2
+
+[[ets]]
+name = "fast"
+tier = "general"
+t_max = 0.020
+
+[[ets]]
+name = "slow"
+tier = "general"
+t_max = 1.0
+
+# clearly fast: t = 16 / 1000 = 0.016 s
+[[nodes]]
+id = "fast1"
+r_true = 1000.0
+b_true = 1.0e9
+c = 16
+latency = 0.01
+noise_sigma = 0.05
+noise_corr_rounds = 20
+
+# on the line: t = 16 / 800 = 0.020 s, drifting +-10%
+[[nodes]]
+id = "flappy"
+r_true = 800.0
+b_true = 1.0e9
+c = 16
+latency = 0.01
+noise_sigma = 0.10
+noise_corr_rounds = 20
+
+# clearly slow: t = 2 / 10 = 0.2 s
+[[nodes]]
+id = "slow1"
+r_true = 10.0
+b_true = 1.0e8
+c = 2
+latency = 0.01
+noise_sigma = 0.05
+noise_corr_rounds = 20
+
+[[nodes]]
+id = "slow2"
+r_true = 10.0
+b_true = 1.0e8
+c = 2
+latency = 0.01
+noise_sigma = 0.05
+noise_corr_rounds = 20
+
+[[workloads]]
+et = "fast"
+events = 20
+units_per_event = 15000
+unit_bytes = 1024
+arrival = "sequential"
+
+[[workloads]]
+et = "slow"
+events = 20
+units_per_event = 20000
+unit_bytes = 1024
+arrival = "sequential"

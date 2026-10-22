@@ -19,6 +19,6 @@ Stage status:
 | --- | --- | --- |
 | 1 | engine, node model, pull / taper / EWMA, basic scenario, V1 / V2 | done |
 | 2 | throughput noise (i.i.d. and AR(1) drift), σ and k, noisy scenarios, parameter sweep over seeds | done |
-| 3 | hysteresis, flapping scenario, V3 | — |
+| 3 | multiple ETs (tier × ceiling), eligibility with round-count + value-band hysteresis, flapping scenario, V3 | done |
 | 4 | churn, timeout reclaim, churn scenario, V4 | — |
 | 5 | dependency resolver, fanout-reduce, two hardware tiers | — |

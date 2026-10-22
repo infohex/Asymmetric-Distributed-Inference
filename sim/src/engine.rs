@@ -63,15 +63,22 @@ pub struct Simulation {
     first_starve: Vec<Option<f64>>,
     busy: Vec<f64>,
     sim_end: f64,
+    /// ET index per Event.
+    event_et: Vec<usize>,
 }
 
 impl Simulation {
     pub fn new(sc: &Scenario) -> Simulation {
         let nodes: Vec<TrueNode> =
             sc.nodes.iter().enumerate().map(|(i, n)| TrueNode::from_spec(i, n)).collect();
-        let conc: Vec<u64> = nodes.iter().map(|n| n.c).collect();
-        let scheduler = Scheduler::new(sc.scheduler.clone(), &conc);
-        let workload = Workload::generate(&sc.workload);
+        let conc: Vec<(u64, String)> = nodes.iter().map(|n| (n.c, n.tier.clone())).collect();
+        let scheduler = Scheduler::new(sc.scheduler.clone(), &conc, &sc.ets);
+        let workload = Workload::generate(&sc.workloads);
+        let event_et: Vec<usize> = workload
+            .events
+            .iter()
+            .map(|e| e.et.as_deref().and_then(|n| scheduler.et_index(n)).unwrap_or(0))
+            .collect();
         let n_events = workload.events.len();
         let n_nodes = nodes.len();
         let mut metrics = Metrics::default();
@@ -90,6 +97,7 @@ impl Simulation {
             first_starve: vec![None; n_events],
             busy: vec![0.0; n_nodes],
             sim_end: sc.sim_end,
+            event_et,
         }
     }
 
@@ -99,14 +107,19 @@ impl Simulation {
     }
 
     pub fn run(mut self) -> (Metrics, Vec<(String, f64, f64)>) {
-        // Initial arrivals.
-        match self.workload.arrival {
-            Arrival::AllAtOnce => {
-                for e in 0..self.workload.events.len() {
-                    self.schedule(0.0, Event::Arrival(e));
+        // Initial arrivals: every Event of an all-at-once chain, the first of a sequential one.
+        let mut first_seen = vec![false; self.workload.arrivals.len()];
+        for e in 0..self.workload.events.len() {
+            let w = self.workload.events[e].workload;
+            match self.workload.arrivals[w] {
+                Arrival::AllAtOnce => self.schedule(0.0, Event::Arrival(e)),
+                Arrival::Sequential => {
+                    if !first_seen[w] {
+                        first_seen[w] = true;
+                        self.schedule(0.0, Event::Arrival(e));
+                    }
                 }
             }
-            Arrival::Sequential => self.schedule(0.0, Event::Arrival(0)),
         }
         // Every node asks for work at t = 0 (after arrivals, by seq order).
         for n in 0..self.nodes.len() {
@@ -134,6 +147,7 @@ impl Simulation {
         self.metrics.sim_time = self.now;
         self.metrics.busy =
             self.nodes.iter().zip(&self.busy).map(|(n, b)| (n.name.clone(), *b)).collect();
+        self.metrics.transitions = self.nodes.iter().map(|n| self.scheduler.transitions(n.id)).sum();
         let truth = self
             .nodes
             .iter()
@@ -146,9 +160,10 @@ impl Simulation {
         let ev = &mut self.workload.events[e];
         ev.submitted_at = Some(self.now);
         let ids = ev.units.clone();
+        let et = self.event_et[e];
         for id in ids {
             let u = &self.workload.units[id];
-            self.scheduler.enqueue(u.id, u.cost, u.bytes);
+            self.scheduler.enqueue(et, u.id, u.cost, u.bytes);
         }
     }
 
@@ -160,8 +175,13 @@ impl Simulation {
         let round = self.scheduler.pull(node, self.now);
         if round.units.is_empty() {
             self.metrics.empty_pulls += 1;
+            // Starvation counts only for Events this node could have served.
             for (i, ev) in self.workload.events.iter().enumerate() {
-                if ev.submitted_at.is_some() && !ev.is_complete() && self.first_starve[i].is_none() {
+                if ev.submitted_at.is_some()
+                    && !ev.is_complete()
+                    && self.first_starve[i].is_none()
+                    && self.scheduler.is_eligible(node, self.event_et[i])
+                {
                     self.first_starve[i] = Some(self.now);
                 }
             }
@@ -237,8 +257,11 @@ impl Simulation {
                 completed_at: self.now,
                 first_starve_at: self.first_starve[e],
             });
-            if self.workload.arrival == Arrival::Sequential && e + 1 < self.workload.events.len() {
-                self.schedule(self.now, Event::Arrival(e + 1));
+            let chain = self.workload.events[e].workload;
+            if self.workload.arrivals[chain] == Arrival::Sequential {
+                if let Some(next) = self.workload.next_in_chain(e) {
+                    self.schedule(self.now, Event::Arrival(next));
+                }
             }
         }
         // Pull again right away; the Arrival above (same time, lower seq) lands first.

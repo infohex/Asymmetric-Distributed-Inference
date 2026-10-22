@@ -10,7 +10,15 @@ pub struct Scenario {
     pub seed: u64,
     pub scheduler: SchedulerParams,
     pub nodes: Vec<NodeSpec>,
-    pub workload: WorkloadSpec,
+    /// Event Trenches. Omitted = one ET named "default", tier general, no ceiling.
+    #[serde(default)]
+    pub ets: Vec<EtSpec>,
+    /// Single workload (kept for simple scenarios) ...
+    #[serde(default)]
+    pub workload: Option<WorkloadSpec>,
+    /// ... or several, each aimed at an ET.
+    #[serde(default)]
+    pub workloads: Vec<WorkloadSpec>,
     /// Hard stop for the simulation clock (seconds). The run normally ends
     /// when every Event has completed; this only guards against a stall.
     #[serde(default = "default_sim_end")]
@@ -30,6 +38,25 @@ pub struct SchedulerParams {
     /// When a pull yields nothing, the node retries after w * retry_fraction.
     #[serde(default = "default_retry_fraction")]
     pub retry_fraction: f64,
+    /// Consecutive qualifying rounds needed to promote a node into an ET
+    /// (demotion always takes one failing round). 1 = no hysteresis.
+    #[serde(default = "default_hysteresis_n")]
+    pub hysteresis_n: u32,
+    /// Value hysteresis: promotion requires t <= t_max * (1 - band); demotion
+    /// happens at t > t_max. 0 = none.
+    #[serde(default = "default_hysteresis_band")]
+    pub hysteresis_band: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EtSpec {
+    pub name: String,
+    #[serde(default = "default_tier")]
+    pub tier: String,
+    /// Per-U time ceiling in seconds; omitted = no ceiling.
+    pub t_max: Option<f64>,
+    /// Window for this ET; omitted = scheduler.w.
+    pub w: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -65,6 +92,8 @@ pub struct WorkloadSpec {
     /// "sequential": the next Event is submitted when the previous one completes.
     #[serde(default = "default_arrival")]
     pub arrival: String,
+    /// Target ET by name; omitted = the first ET.
+    pub et: Option<String>,
 }
 
 fn default_seed() -> u64 {
@@ -82,6 +111,12 @@ fn default_k() -> f64 {
 fn default_retry_fraction() -> f64 {
     0.25
 }
+fn default_hysteresis_n() -> u32 {
+    3
+}
+fn default_hysteresis_band() -> f64 {
+    0.2
+}
 fn default_tier() -> String {
     "general".to_string()
 }
@@ -96,8 +131,14 @@ impl Scenario {
     pub fn load(path: &Path) -> Result<Scenario, String> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        let s: Scenario =
+        let mut s: Scenario =
             toml::from_str(&text).map_err(|e| format!("bad scenario {}: {e}", path.display()))?;
+        if let Some(w) = s.workload.take() {
+            s.workloads.insert(0, w);
+        }
+        if s.ets.is_empty() {
+            s.ets.push(EtSpec { name: "default".into(), tier: "general".into(), t_max: None, w: None });
+        }
         s.validate()?;
         Ok(s)
     }
@@ -117,13 +158,36 @@ impl Scenario {
                 return Err(format!("node {}: r_true, b_true > 0, c >= 1, latency >= 0", n.id));
             }
         }
-        if self.workload.events == 0 || self.workload.units_per_event == 0 {
-            return Err("workload.events and workload.units_per_event must be >= 1".into());
+        if self.workloads.is_empty() {
+            return Err("at least one workload is required".into());
         }
-        match self.workload.arrival.as_str() {
-            "all_at_once" | "sequential" => Ok(()),
-            other => Err(format!("workload.arrival: unknown mode {other:?}")),
+        for wl in &self.workloads {
+            if wl.events == 0 || wl.units_per_event == 0 {
+                return Err("workload.events and workload.units_per_event must be >= 1".into());
+            }
+            match wl.arrival.as_str() {
+                "all_at_once" | "sequential" => {}
+                other => return Err(format!("workload.arrival: unknown mode {other:?}")),
+            }
+            if let Some(et) = &wl.et {
+                if !self.ets.iter().any(|e| &e.name == et) {
+                    return Err(format!("workload.et {et:?} names no ET"));
+                }
+            }
         }
+        for e in &self.ets {
+            match e.tier.as_str() {
+                "general" | "gpu" | "special" => {}
+                other => return Err(format!("et {}: unknown tier {other:?}", e.name)),
+            }
+        }
+        for n in &self.nodes {
+            match n.tier.as_str() {
+                "general" | "gpu" | "special" => {}
+                other => return Err(format!("node {}: unknown tier {other:?}", n.id)),
+            }
+        }
+        Ok(())
     }
 }
 

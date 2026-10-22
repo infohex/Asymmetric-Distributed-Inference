@@ -59,7 +59,7 @@ Implemented exactly as sections 7–9 of the design document:
 - Pull: r_safe × W, minimum c; proportional tapering when a batch has less than one round left.
 - Drop-down rule: a node checks the fastest ET it qualifies for first.
 - Timeout: U not returned by issued_at + k × W are reclaimed and reissued.
-- Hysteresis: N consecutive qualifying rounds to promote, one to demote.
+- Hysteresis: promotion requires t ≤ t_max × (1 − band) for N consecutive rounds; one round of t > t_max demotes.
 - Dependency resolver: U done → check dependents → enqueue.
 
 Every scheduler decision uses only what it can observe (return times, byte counts), never node ground truth. The code separates the two with types so the simulator cannot "cheat".

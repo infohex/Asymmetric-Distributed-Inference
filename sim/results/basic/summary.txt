@@ -11,5 +11,5 @@ per node: name, r_true, r_est(final), steady rounds, mean round duration, idle r
 
 V1 steady-state round duration: mean 0.9473 s, spread max-min 0.0889 s (P95-P5 0.0889 s), limit 0.2000 s -> PASS
 V2 max tail wait over 10 events: 0.3590 s, limit 1.0000 s -> PASS
-V3: not in stage 1
+ET eligibility transitions (all nodes): 0
 V4: not in stage 1

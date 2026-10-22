@@ -50,6 +50,8 @@ pub struct Metrics {
     pub total_cost: f64,
     /// Σ r_true over all nodes (ground truth, used only for the efficiency figure).
     pub sum_r_true: f64,
+    /// ET eligibility changes (promotions + demotions) summed over nodes.
+    pub transitions: u64,
 }
 
 pub struct Verdicts {
@@ -162,7 +164,7 @@ impl Metrics {
         }
         let _ = writeln!(s, "V2 max tail wait over {} events: {:.4} s, limit {:.4} s -> {}",
             self.events.len(), v.v2_max_tail, w, pf(v.v2_pass));
-        let _ = writeln!(s, "V3: not in stage 1");
+        let _ = writeln!(s, "ET eligibility transitions (all nodes): {}", self.transitions);
         let _ = writeln!(s, "V4: not in stage 1");
         s
     }

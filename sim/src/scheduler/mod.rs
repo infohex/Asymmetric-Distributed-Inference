@@ -1,13 +1,14 @@
-//! The scheduler: node table, ready queue (a single ET in stage 1), pull rules.
+//! The scheduler: node table, Event Trenches, pull rules, eligibility with
+//! hysteresis.
 //!
 //! It never sees node ground truth. Everything it knows comes in through
-//! `Observation`s (issue time, return time, counts, bytes) and the node's
-//! declared concurrency `c`.
+//! `Observation`s (issue time, return time, counts, bytes), the node's
+//! declared concurrency `c` and its declared hardware tier.
 
 pub mod estimate;
 
 use crate::node::NodeId;
-use crate::scenario::SchedulerParams;
+use crate::scenario::{EtSpec, SchedulerParams};
 use crate::workload::UnitId;
 use estimate::Estimate;
 use std::collections::VecDeque;
@@ -30,6 +31,8 @@ pub struct Round {
     pub kind: RoundKind,
     /// Scheduler's r_safe for the node at issue time (0 during slow start).
     pub r_est: f64,
+    /// ET the round was taken from.
+    pub et: usize,
 }
 
 /// What the scheduler is told when a round comes back.
@@ -46,13 +49,21 @@ pub struct Observation {
 struct InFlight {
     issued_at: f64,
     cost: f64,
+    et: usize,
 }
 
 #[derive(Debug, Clone)]
 struct NodeEntry {
     c: u64,
+    tier_level: u8,
     est: Estimate,
     in_flight: Option<InFlight>,
+    /// Per ET: currently eligible.
+    eligible: Vec<bool>,
+    /// Per ET: consecutive qualifying rounds (promotion hysteresis).
+    pass_count: Vec<u32>,
+    /// Count of eligibility changes (promotions + demotions) over all ETs.
+    transitions: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -62,20 +73,74 @@ struct ReadyUnit {
     bytes: u64,
 }
 
-pub struct Scheduler {
-    params: SchedulerParams,
-    nodes: Vec<NodeEntry>,
+#[derive(Debug, Clone)]
+pub struct Trench {
+    pub name: String,
+    pub tier_level: u8,
+    pub t_max: f64,
+    pub w: f64,
     ready: VecDeque<ReadyUnit>,
     ready_cost: f64,
 }
 
+pub fn tier_level(tier: &str) -> u8 {
+    match tier {
+        "general" => 0,
+        "gpu" => 1,
+        "special" => 2,
+        _ => 0,
+    }
+}
+
+pub struct Scheduler {
+    params: SchedulerParams,
+    nodes: Vec<NodeEntry>,
+    ets: Vec<Trench>,
+}
+
 impl Scheduler {
-    pub fn new(params: SchedulerParams, node_concurrency: &[u64]) -> Scheduler {
-        let nodes = node_concurrency
+    pub fn new(params: SchedulerParams, nodes: &[(u64, String)], ets: &[EtSpec]) -> Scheduler {
+        let w = params.w;
+        let mut trenches: Vec<Trench> = ets
             .iter()
-            .map(|&c| NodeEntry { c, est: Estimate::new(), in_flight: None })
+            .map(|e| Trench {
+                name: e.name.clone(),
+                tier_level: tier_level(&e.tier),
+                t_max: e.t_max.unwrap_or(f64::INFINITY),
+                w: e.w.unwrap_or(w),
+                ready: VecDeque::new(),
+                ready_cost: 0.0,
+            })
             .collect();
-        Scheduler { params, nodes, ready: VecDeque::new(), ready_cost: 0.0 }
+        // Fastest ET first: that is the order a node checks them in.
+        trenches.sort_by(|a, b| a.t_max.total_cmp(&b.t_max).then(a.tier_level.cmp(&b.tier_level)));
+        let n_et = trenches.len();
+        let nodes = nodes
+            .iter()
+            .map(|(c, tier)| {
+                let lvl = tier_level(tier);
+                NodeEntry {
+                    c: *c,
+                    tier_level: lvl,
+                    est: Estimate::new(),
+                    in_flight: None,
+                    // Before any measurement a node may only take from the
+                    // slowest ET its hardware allows: the safe place to slow-start.
+                    eligible: Self::initial_eligibility(&trenches, lvl),
+                    pass_count: vec![0; n_et],
+                    transitions: 0,
+                }
+            })
+            .collect();
+        Scheduler { params, nodes, ets: trenches }
+    }
+
+    fn initial_eligibility(ets: &[Trench], lvl: u8) -> Vec<bool> {
+        let mut v = vec![false; ets.len()];
+        if let Some(i) = ets.iter().rposition(|e| e.tier_level <= lvl) {
+            v[i] = true;
+        }
+        v
     }
 
     pub fn w(&self) -> f64 {
@@ -86,108 +151,185 @@ impl Scheduler {
         self.params.w * self.params.retry_fraction
     }
 
-    pub fn ready_len(&self) -> usize {
-        self.ready.len()
-    }
-
     pub fn estimate(&self, node: NodeId) -> &Estimate {
         &self.nodes[node].est
     }
 
-    pub fn enqueue(&mut self, id: UnitId, cost: f64, bytes: u64) {
-        self.ready.push_back(ReadyUnit { id, cost, bytes });
-        self.ready_cost += cost;
+    pub fn transitions(&self, node: NodeId) -> u64 {
+        self.nodes[node].transitions
     }
 
-    /// Node `node` asks for work at time `now`. Returns the round it gets,
-    /// which may be empty.
+    pub fn et_index(&self, name: &str) -> Option<usize> {
+        self.ets.iter().position(|e| e.name == name)
+    }
+
+    pub fn ets(&self) -> &[Trench] {
+        &self.ets
+    }
+
+    pub fn is_eligible(&self, node: NodeId, et: usize) -> bool {
+        self.nodes[node].eligible[et]
+    }
+
+    pub fn enqueue(&mut self, et: usize, id: UnitId, cost: f64, bytes: u64) {
+        let t = &mut self.ets[et];
+        t.ready.push_back(ReadyUnit { id, cost, bytes });
+        t.ready_cost += cost;
+    }
+
+    /// Node `node` asks for work at time `now`. ETs are tried fastest first;
+    /// the first one that yields a non-empty round wins. A zero share in one
+    /// ET (remainder reserved for a faster node) falls through to the next.
+    /// The round may be empty.
     pub fn pull(&mut self, node: NodeId, now: f64) -> Round {
-        let entry = &self.nodes[node];
-        assert!(entry.in_flight.is_none(), "node {node} pulled while a round is in flight");
-        let k = self.params.k;
-        let w = self.params.w;
-
-        let (quota_cost, kind, r_est) = if entry.est.samples == 0 {
-            (entry.c as f64, RoundKind::SlowStart, 0.0)
-        } else if entry.est.ramp {
-            // Ramp: take a full window at the latest measurement, grow until stable.
-            let r_i = entry.est.r_safe(k);
-            let q = (r_i * w).floor().max(entry.c as f64).min(self.ready_cost.max(0.0));
-            (q, RoundKind::SlowStart, r_i)
+        assert!(self.nodes[node].in_flight.is_none(), "node {node} pulled while a round is in flight");
+        let eligible_somewhere = self.nodes[node].eligible.iter().any(|&e| e);
+        let lvl = self.nodes[node].tier_level;
+        let candidates: Vec<(usize, bool)> = if eligible_somewhere {
+            (0..self.ets.len())
+                .filter(|&i| self.nodes[node].eligible[i] && self.ets[i].ready_cost > 0.0)
+                .map(|i| (i, false))
+                .collect()
         } else {
-            let r_i = entry.est.r_safe(k);
-            // Σ r over nodes that have an estimate, and their expected remaining in-flight work.
-            let mut sum_r = 0.0;
-            let mut remaining_other = 0.0;
-            let mut max_r = 0.0_f64;
-            for (j, n) in self.nodes.iter().enumerate() {
-                if n.est.samples == 0 {
-                    continue;
-                }
-                let r_j = n.est.r_safe(k);
-                sum_r += r_j;
-                max_r = max_r.max(r_j);
-                if j != node {
-                    if let Some(f) = &n.in_flight {
-                        let done = r_j * (now - f.issued_at);
-                        remaining_other += (f.cost - done).max(0.0);
-                    }
-                }
-            }
-            if sum_r <= 0.0 || r_i <= 0.0 {
-                // Degenerate estimate: fall back to the minimum.
-                (entry.c as f64, RoundKind::Normal, r_i)
-            } else {
-                let d = (self.ready_cost + remaining_other) / sum_r;
-                if d >= w {
-                    ((r_i * w).floor().max(entry.c as f64), RoundKind::Normal, r_i)
-                } else {
-                    let mut q = (r_i * d).floor();
-                    if q < 1.0 && self.ready_cost > 0.0 && r_i >= max_r {
-                        // Rounding remainder goes to the fastest node.
-                        q = (r_i * d).ceil().max(1.0);
-                    }
-                    (q, RoundKind::Taper, r_i)
-                }
-            }
+            // Qualifies nowhere: keep measuring it with a minimal probe from
+            // the slowest ET its hardware allows, so it can be re-enabled
+            // once its t recovers.
+            (0..self.ets.len())
+                .rev()
+                .find(|&i| self.ets[i].tier_level <= lvl && self.ets[i].ready_cost > 0.0)
+                .map(|i| vec![(i, true)])
+                .unwrap_or_default()
         };
-
-        let mut units = Vec::new();
-        let mut cost = 0.0;
-        let mut bytes = 0;
-        while let Some(u) = self.ready.front() {
-            if cost + u.cost > quota_cost + 1e-9 {
-                break;
+        for (et, probe) in candidates {
+            let (quota_cost, kind, r_est) = self.quota(node, et, now, probe);
+            let t = &mut self.ets[et];
+            let mut units = Vec::new();
+            let mut cost = 0.0;
+            let mut bytes = 0;
+            while let Some(u) = t.ready.front() {
+                if cost + u.cost > quota_cost + 1e-9 {
+                    break;
+                }
+                let u = t.ready.pop_front().unwrap();
+                cost += u.cost;
+                bytes += u.bytes;
+                units.push(u.id);
             }
-            let u = self.ready.pop_front().unwrap();
-            cost += u.cost;
-            bytes += u.bytes;
-            units.push(u.id);
+            if units.is_empty() {
+                continue;
+            }
+            t.ready_cost -= cost;
+            if t.ready_cost < 1e-9 {
+                t.ready_cost = 0.0;
+            }
+            self.nodes[node].in_flight = Some(InFlight { issued_at: now, cost, et });
+            return Round { units, cost, bytes, kind, r_est, et };
         }
-        self.ready_cost -= cost;
-        if self.ready_cost < 1e-9 {
-            self.ready_cost = 0.0;
-        }
-        if !units.is_empty() {
-            self.nodes[node].in_flight = Some(InFlight { issued_at: now, cost });
-        }
-        Round { units, cost, bytes, kind, r_est }
+        Round { units: Vec::new(), cost: 0.0, bytes: 0, kind: RoundKind::Normal, r_est: 0.0, et: 0 }
     }
 
-    /// A round came back. Updates the node's estimate from the observation.
+    /// How much of ET `et` node `node` should take now: (cost, kind, r_est).
+    fn quota(&self, node: NodeId, et: usize, now: f64, probe: bool) -> (f64, RoundKind, f64) {
+        let entry = &self.nodes[node];
+        let k = self.params.k;
+        let w = self.ets[et].w;
+        let ready_cost = self.ets[et].ready_cost;
+        if entry.est.samples == 0 || probe {
+            return (entry.c as f64, RoundKind::SlowStart, entry.est.r_safe(k));
+        }
+        let r_i = entry.est.r_safe(k);
+        if entry.est.ramp {
+            let q = (r_i * w).floor().max(entry.c as f64).min(ready_cost);
+            return (q, RoundKind::SlowStart, r_i);
+        }
+        // Σ r over the nodes actually serving this ET right now: eligible,
+        // with an estimate, and either idle or running a round from this
+        // ET. A node busy in another ET is not a server of this one (it
+        // only drops down when its own ET is empty), so counting it would
+        // shrink everyone else's share and leave the remainder to a node
+        // that never comes. Same set for the "fastest node" remainder rule.
+        let mut sum_r = 0.0;
+        let mut remaining_other = 0.0;
+        let mut max_r = 0.0_f64;
+        for (j, n) in self.nodes.iter().enumerate() {
+            if n.est.samples == 0 || !n.eligible[et] {
+                continue;
+            }
+            let serving_here = match &n.in_flight {
+                None => true,
+                Some(f) => f.et == et,
+            };
+            if !serving_here {
+                continue;
+            }
+            let r_j = n.est.r_safe(k);
+            sum_r += r_j;
+            max_r = max_r.max(r_j);
+            if j != node {
+                if let Some(f) = &n.in_flight {
+                    let done = r_j * (now - f.issued_at);
+                    remaining_other += (f.cost - done).max(0.0);
+                }
+            }
+        }
+        if sum_r <= 0.0 || r_i <= 0.0 {
+            return (entry.c as f64, RoundKind::Normal, r_i);
+        }
+        let d = (ready_cost + remaining_other) / sum_r;
+        if d >= w {
+            ((r_i * w).floor().max(entry.c as f64), RoundKind::Normal, r_i)
+        } else {
+            let mut q = (r_i * d).floor();
+            if q < 1.0 && ready_cost > 0.0 && r_i >= max_r {
+                q = (r_i * d).ceil().max(1.0);
+            }
+            (q, RoundKind::Taper, r_i)
+        }
+    }
+
+    /// A round came back. Updates the node's estimate and its ET eligibility.
     pub fn round_done(&mut self, obs: Observation) {
+        let w = self.params.w;
+        let alpha = self.params.alpha;
+        let k = self.params.k;
+        let n_hyst = self.params.hysteresis_n.max(1);
         let entry = &mut self.nodes[obs.node];
         let f = entry.in_flight.take().expect("round_done without a round in flight");
         debug_assert!((f.issued_at - obs.issued_at).abs() < 1e-9);
         let duration = (obs.returned_at - obs.issued_at).max(1e-9);
-        // Stage 1: no separation of transfer and compute time; bandwidth is
-        // recorded as bytes over the whole round and not yet used.
         let r_round = obs.cost / duration;
         let b_round = obs.bytes as f64 / duration;
-        // A round much shorter than W (taper, crumbs) is dominated by the fixed
-        // round-trip overhead and carries little information about capacity:
-        // weight it by its length relative to the window.
-        let alpha_eff = self.params.alpha * (duration / self.params.w).min(1.0);
+        // Rounds much shorter than W are dominated by the fixed overhead and
+        // carry little information: weight them by their length.
+        let alpha_eff = alpha * (duration / w).min(1.0);
         entry.est.update(r_round, b_round, alpha_eff);
+
+        // Eligibility: t = c / r_safe against each ET's ceiling, hardware tier
+        // as the hard condition. Promotion after n_hyst consecutive qualifying
+        // rounds, demotion after one failing round.
+        let r_safe = entry.est.r_safe(k);
+        let t_est = if r_safe > 0.0 { entry.c as f64 / r_safe } else { f64::INFINITY };
+        let band = self.params.hysteresis_band.clamp(0.0, 0.9);
+        for (i, et) in self.ets.iter().enumerate() {
+            let hw_ok = et.tier_level <= entry.tier_level;
+            // Value hysteresis: a wider margin to get in than to stay in.
+            let promote_ok = hw_ok && t_est <= et.t_max * (1.0 - band);
+            let stay_ok = hw_ok && t_est <= et.t_max;
+            if entry.eligible[i] {
+                if !stay_ok {
+                    entry.eligible[i] = false;
+                    entry.pass_count[i] = 0;
+                    entry.transitions += 1;
+                }
+            } else if promote_ok {
+                entry.pass_count[i] += 1;
+                if entry.pass_count[i] >= n_hyst {
+                    entry.eligible[i] = true;
+                    entry.transitions += 1;
+                }
+            } else {
+                entry.pass_count[i] = 0;
+            }
+        }
     }
 }

@@ -208,7 +208,7 @@ B is updated the same way. A rolling standard deviation σ of r is maintained al
 
 **Weight by round length.** Taper rounds are far shorter than W, so the fixed round-trip overhead dominates and their measured r is badly low; updating with full weight collapses the estimate at the end of every batch. Hence α_eff = α × min(1, round duration ÷ W). (Simulator stage 1: unweighted, the estimate fell from 990 to 226; weighted, it holds at 986.)
 
-**Threshold and hysteresis.** ET eligibility is judged on t = c ÷ r. Promotion requires N consecutive qualifying rounds; demotion happens after one failing round. Err on the conservative side: a slow node wrongly admitted to a fast ET holds up a whole batch, whereas a fast node temporarily held in a slower ET costs little.
+**Threshold and hysteresis.** ET eligibility is judged on t = c ÷ r, with hysteresis in two dimensions: in value, promotion requires t ≤ t_max × (1 − band) while demotion happens at t > t_max; in time, promotion also requires N consecutive qualifying rounds while demotion takes one. Err on the conservative side: a slow node wrongly admitted to a fast ET holds up a whole batch, whereas a fast node temporarily held in a slower ET costs little. (Simulator stage 3: for a slowly drifting node, time hysteresis alone cut transitions by only 0–50%, because the node really does cross the line; band = 0.2, about twice the drift amplitude, cut them by 83–94%.)
 
 **Concurrency c.** For AI-type U it is mostly determined by memory: a U declares the memory it needs, and a node's c is computed from remaining memory. Hardware parameters give an initial value; measured r already reflects real concurrency.
 
@@ -225,6 +225,8 @@ n_i = ⌊ R · r_i / Σ_j r_j ⌋
 ```
 
 This shrinks the window to R ÷ Σr so all nodes finish the final round together. The rounding remainder goes to the node with the largest r, because the last U's completion time is the lower bound on batch completion.
+
+Both Σr and "the node with the largest r" count only the **nodes actually serving this ET now**: idle ones, or ones whose in-flight round came from this ET. A node busy in another ET does not count; it only drops down once its own ET is empty. A node that gets a zero share in one ET (remainder reserved for a faster node) moves on to the next ET it qualifies for. (Simulator stage 3: without this, the slow ET's remainder waited for a fast node that never came and a 500-U Event stalled for 310 s.)
 
 **Timeout reclaim.** A round not returned after k × W is treated as offline and its U go back to the ET for reissue. If the node later returns them, the first result wins and duplicates are discarded. The timeout multiplier may be personalized from a node's online history.
 
@@ -283,6 +285,7 @@ The scheduler keeps three further indexes: prerequisite U → dependent U (unloc
 | k (safety factor) | 1 | r_safe = r − k × σ, covers roughly 84% of variation |
 | Timeout multiplier | 2 × W | May be personalized from node online history |
 | N (promotion hysteresis rounds) | 3 | Three consecutive qualifying rounds to move up; one failing round to move down |
+| band (promotion margin) | 0.2 | Promotion requires t ≤ 0.8 × t_max; about twice the drift amplitude (simulator result) |
 | Sampled verification rate | 5–10% | For untrusted nodes |
 | Hardware tiers | 3 | General / General GPU / Specialized |
 | First-round pull | c | Slow start |
