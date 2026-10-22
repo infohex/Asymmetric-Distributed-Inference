@@ -14,43 +14,43 @@ A scheduling architecture for distributed computation over heterogeneous, idle h
 
 ## Core idea
 
-Work is expressed as **minimal compute units**: indivisible, idempotent atoms of computation. A node never receives *one* unit; it receives as many as it can finish inside a fixed **time window W**, based on throughput the scheduler has measured from real round trips.
+Work is expressed as **Unity (U)**: indivisible, idempotent granules of computation, each an operator subgraph plus its input slice, encoded in a hardware-independent IR at the tensor operator graph level. One or more U form an **Event (E)**, the minimal task event; E wait in **Event Trenches (ET)**, buffer pools partitioned by hardware tier and per-U time ceiling. A node never receives *one* U; it receives as many as it can finish inside a fixed **time window W**, based on throughput the scheduler has measured from real round trips.
 
-| Node | Throughput | Units taken per round (W = 1 s) | Returns in |
+| Node | Throughput | U taken per round (W = 1 s) | Returns in |
 | --- | --- | --- | --- |
-| Fast | 1000 units/s | ~1000 | ~1 s |
-| Slow | 10 units/s | ~10 | ~1 s |
+| Fast | 1000 U/s | ~1000 | ~1 s |
+| Slow | 10 U/s | ~10 | ~1 s |
 
 Both nodes come back at the same time. The aggregator always waits one W, regardless of how uneven the fleet is.
 
-Task pools are split into **lanes** by a per-unit latency ceiling, like fast and slow lanes on a highway. A node qualifies for a lane only if its measured per-unit time (network included) is under that lane's ceiling. Fast nodes may drop down to slower lanes when the fast lane is empty; slow nodes never move up.
+ETs work like fast and slow lanes on a highway. A node qualifies for an ET only if its hardware matches the tier and its measured per-U time (network included) is under that ET's ceiling. Fast nodes may drop down to slower ETs when the fast one is empty; slow nodes never move up.
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    S[Task submission] --> R
-    R[Dependency resolver<br/>only releases units whose prerequisites are done]
-    R --> F[Fast lane<br/>unit time ≤ 10 ms]
-    R --> N[Normal lane<br/>unit time ≤ 100 ms]
-    R --> L[Slow lane<br/>unit time ≤ 1 s]
+    S[E submission] --> C[E compiler<br/>splits into U, builds DAG, picks ET]
+    C --> R[Dependency resolver<br/>only releases U whose prerequisites are done]
+    R --> F[Fast ET<br/>U time ≤ 10 ms]
+    R --> N[Normal ET<br/>U time ≤ 100 ms]
+    R --> L[Slow ET<br/>U time ≤ 1 s]
     F --> NF[Fast node r = 1000/s<br/>takes r × W per round]
-    N -. fast lane empty .-> NF
+    N -. fast ET empty .-> NF
     L --> NS[Slow node r = 10/s<br/>takes r × W per round]
-    NF --> RES[Result report<br/>scheduler times it, updates r]
+    NF --> RES[Result report<br/>scheduler times it, updates r and B]
     NS --> RES
     RES -- unlocks dependents --> R
 ```
 
 Three layers, three responsibilities:
 
-1. **Dependency resolver** — expands each task into a DAG of units and releases a unit into a lane only when all its prerequisites have completed. Nodes never see task logic.
-2. **Lane pools** — one ready queue per latency ceiling. Tasks choose a lane by their timeliness requirement; nodes qualify by measured speed.
-3. **Node pull with fixed window** — every W, a node takes `throughput × W` units. Throughput is measured by the scheduler from real round trips and smoothed with an EWMA; nodes cannot self-report.
+1. **E compiler and dependency resolver** — the compiler splits each E into U, builds the DAG and picks an ET; the resolver releases a U only when all its prerequisites have completed. Nodes never see task logic.
+2. **Event Trenches** — one ready queue per (hardware tier, time ceiling). E choose an ET by their hardware needs and timeliness; nodes qualify by measured speed.
+3. **Node pull with fixed window** — every W, a node takes `throughput × W` U. Throughput and bandwidth are measured by the scheduler from real round trips and smoothed with an EWMA; nodes cannot self-report.
 
 ## Documentation
 
-- [Scheduling design](docs/en/scheduling-design.md) — full design: concepts, resolver, lanes, capacity measurement, pull rules, data structures, parameter defaults, open questions
+- [Scheduling design](docs/en/scheduling-design.md) — full design: U / E / ET, IR, state machine, capacity measurement, pull rules, data scheduling, extension to AI workloads, data structures, parameter defaults, open questions
 - [调度设计（中文）](docs/zh-CN/scheduling-design.md)
 
 ## Status
